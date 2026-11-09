@@ -95,6 +95,11 @@ bool TakeWarmBeforeStart();
 void RequestSkipWarm();
 bool TakeSkipWarm();
 
+/// Skip button of the recipe preparation: it stops after its current builds and the game starts,
+/// and a later launch prepares from the start. Taken (and cleared) by the renderer.
+void RequestSkipRecipe();
+bool TakeSkipRecipe();
+
 /// The GPU driver, device and pipeline cache version pipelines were precached for.
 struct DriverStamp {
     u32 driver{};

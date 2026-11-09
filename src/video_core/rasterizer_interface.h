@@ -47,6 +47,8 @@ enum class LoadCallbackStage {
     /// The shader precache running before the game starts (programs built / total).
     /// Last, so the values of the others stay as frontends that know only those expect.
     Warm,
+    /// The precompiled recipe being prepared for this driver and build (pipelines done / total).
+    Recipe,
 };
 using DiskResourceLoadCallback = std::function<void(LoadCallbackStage, std::size_t, std::size_t)>;
 

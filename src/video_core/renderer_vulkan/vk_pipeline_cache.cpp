@@ -2541,7 +2541,7 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
         }
         const size_t done = start_index + state.built + state.failed + state.skipped;
         if (done % 64 == 0 || done == total) {
-            callback(VideoCore::LoadCallbackStage::Build, done, total);
+            callback(VideoCore::LoadCallbackStage::Recipe, done, total);
         }
     };
     const auto finish = [&](size_t index, bool ok) {
@@ -2588,9 +2588,16 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
                     "them, without kept infos",
                     start_index, start_index);
     }
-    callback(VideoCore::LoadCallbackStage::Build, start_index, total);
+    // Drops a press left over from a launch that finished preparing first.
+    VideoCommon::ShaderWarm::TakeSkipRecipe();
+    callback(VideoCore::LoadCallbackStage::Recipe, start_index, total);
+    bool skipped_by_user = false;
     for (size_t index = start_index; index < total; ++index) {
         if (stop_loading.stop_requested()) {
+            break;
+        }
+        if (VideoCommon::ShaderWarm::TakeSkipRecipe()) {
+            skipped_by_user = true;
             break;
         }
         auto& record = records[index];
@@ -2704,8 +2711,9 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
     batch.Wait();
     const double seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
-    LOG_INFO(Render_Vulkan, "Precompiled pipelines: {} prepared, {} failed, {} skipped, in {:.1f} s",
-             state.built, state.failed, state.skipped, seconds);
+    LOG_INFO(Render_Vulkan,
+             "Precompiled pipelines: {} prepared, {} failed, {} skipped, in {:.1f} s{}", state.built, state.failed, state.skipped, seconds,
+             skipped_by_user ? " (preparation skipped from the loading screen)" : "");
     if (stop_loading.stop_requested()) {
         kept.file.close();
         std::filesystem::remove(kept_temporary, error);
@@ -2803,11 +2811,16 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
                  kept_records.size(), kept.infos_by_hash.size(), kept.spirv_by_hash.size(),
                  kept.spirv_bytes >> 20, kept.offset >> 20);
     }
+    // What was kept serves this session. Without the stamp a later launch prepares again, from
+    // the start so that it keeps every pipeline's infos; the driver still has what it compiled.
     // Do not mark RADV preparation complete until the populated Vulkan cache is on disk.
-    const bool cache_saved = !radv_vulkan_cache ||
-                             SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename,
-                                                          vulkan_pipeline_cache, CACHE_VERSION);
-    if (cache_saved) {
+    const bool cache_saved = !skipped_by_user &&
+                             (!radv_vulkan_cache ||
+                              SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename,
+                                                           vulkan_pipeline_cache, CACHE_VERSION));
+    if (skipped_by_user) {
+        std::filesystem::remove(stamp_path, error);
+    } else if (cache_saved) {
         std::ofstream stamp_file(stamp_path, std::ios::binary | std::ios::trunc);
         stamp_file << stamp;
         stamp_file.close();

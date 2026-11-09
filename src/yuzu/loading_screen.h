@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <memory>
+#include <QPointer>
 #include <QString>
 #include <QWidget>
 #include <QtGlobal>
@@ -33,6 +34,7 @@ class QByteArray;
 class QGraphicsOpacityEffect;
 class QMovie;
 class QPropertyAnimation;
+class QMessageBox;
 class QPushButton;
 
 class LoadingScreen : public QWidget {
@@ -78,7 +80,10 @@ private:
     VideoCore::LoadCallbackStage previous_stage;
 
     QGraphicsOpacityEffect* opacity_effect = nullptr;
+    void ConfirmSkipRecipe();
+
     QPushButton* skip_button = nullptr;
+    QPointer<QMessageBox> skip_confirm;
     std::unique_ptr<QPropertyAnimation> fadeout_animation;
 
     // Definitions for the differences in text and styling for each stage
