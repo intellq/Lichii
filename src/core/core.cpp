@@ -494,8 +494,8 @@ struct System::Impl {
         // core (no idle core to compile on) or the debugger, nor where any core's backend lacks
         // it (NCE, 32-bit processes, dynarmic's non-x64 backends).
         const char* const jit_warmup_option = std::getenv("EDEN_NX2_JIT_WARMUP");
-        const bool jit_warmup_enabled = jit_warmup_option == nullptr || jit_warmup_option[0] != '0';
-        if (!jit_warmup_enabled) {
+        const bool jit_warmup_enabled = jit_warmup_option != nullptr && jit_warmup_option[0] == '1';
+        if (jit_warmup_option != nullptr && !jit_warmup_enabled) {
             LOG_INFO(Core_ARM, "JIT warm-up disabled by EDEN_NX2_JIT_WARMUP");
         }
         if (jit_warmup_enabled && kernel.IsMulticore() && !system.DebuggerEnabled()) {
