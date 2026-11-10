@@ -2161,7 +2161,10 @@ bool TextureCacheRuntime::UpscaleWithDlss(Framebuffer* dst_framebuffer, ImageVie
             .barrier_aspect = ImageAspectMask(view.format),
         };
     };
-    const VkExtent2D extent = dst_framebuffer->RenderArea();
+    const bool native_resolution =
+        Settings::GetNvidiaDlssRuntimeSettings().quality == Settings::NvidiaDlssQuality::Native;
+    const VkExtent2D extent = native_resolution ? VkExtent2D{render_size[0], render_size[1]}
+                                                : dst_framebuffer->RenderArea();
     bool upscaled{};
     try {
         upscaled = dlss_upscaler->Upscale({
@@ -2187,7 +2190,8 @@ bool TextureCacheRuntime::UpscaleWithDlss(Framebuffer* dst_framebuffer, ImageVie
         return false;
     }
     DrawUpscaledOutput(dst_framebuffer, dlss_upscaler->OutputView(), dlss_upscaler->OutputImage(),
-                       dlss_upscaler->PointSampler());
+                       native_resolution ? dlss_upscaler->LinearSampler()
+                                         : dlss_upscaler->PointSampler());
     static bool logged{};
     if (!logged) {
         logged = true;
