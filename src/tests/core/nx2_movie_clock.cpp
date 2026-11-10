@@ -72,3 +72,23 @@ TEST_CASE("NX2 movie clock restarts after a pause, a loop or a long lag", "[nx2_
     clock.Reset();
     REQUIRE_FALSE(clock.Due(now, resumed));
 }
+
+TEST_CASE("NX2 movie clock follows played audio and falls back when it stalls", "[nx2_movie_clock]") {
+    Service::Nx2MovieClock clock;
+    clock.Acquired(Start, 100'000, 0, 12'000);
+    REQUIRE(clock.Due(Start + 100'000, 0, 14'400) == 150'000);
+    REQUIRE(clock.Due(Start + 600'000, 0, 14'400) == 700'000);
+    REQUIRE(clock.Due(Start + 700'000, 0, 45'600) == 800'000);
+    clock.Reset();
+    clock.Acquired(Start + 1'000'000, 200'000, 0, 50'000);
+    REQUIRE(clock.Due(Start + 1'100'000, 0, 54'800) == 300'000);
+}
+
+TEST_CASE("NX2 movie clock bounds waits for early video frames", "[nx2_movie_clock]") {
+    using Clock = Service::Nx2MovieClock;
+    CHECK(Clock::EarlyWaitUs(100'000, 100'000, 16'000) == 0);
+    CHECK(Clock::EarlyWaitUs(108'000, 100'000, 16'000) == 0);
+    CHECK(Clock::EarlyWaitUs(108'001, 100'000, 16'000) == 1'000);
+    CHECK(Clock::EarlyWaitUs(118'000, 100'000, 16'000) == 10'000);
+    CHECK(Clock::EarlyWaitUs(500'000, 100'000, 16'000) == 20'000);
+}

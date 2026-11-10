@@ -190,12 +190,16 @@ public:
     bool UsingDecodeOrder() const {
         return m_decode_order;
     }
+    u64 ErrorCount() const {
+        return m_errors;
+    }
 
 private:
     const Decoder& m_decoder;
     AVCodecContext* m_codec_context{};
     std::shared_ptr<Frame> m_final_frame{};
     bool m_decode_order{};
+    u64 m_errors{};
 };
 
 struct FrameOffsets {

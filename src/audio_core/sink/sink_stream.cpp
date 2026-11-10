@@ -25,6 +25,11 @@
 
 namespace AudioCore::Sink {
 
+std::atomic<u64>& Nx2RenderPlayedFrames() {
+    static std::atomic<u64> played{};
+    return played;
+}
+
 void SinkStream::AppendBuffer(SinkBuffer& buffer, std::span<s16> samples) {
     if (type == StreamType::In)
         return;
@@ -269,6 +274,9 @@ void SinkStream::ProcessAudioOutAndRender(std::span<s16> output_buffer, std::siz
         last_sample_count_update_time = system.CoreTiming().GetGlobalTimeNs();
         min_played_sample_count = max_played_sample_count;
         max_played_sample_count += actual_frames_written;
+    }
+    if (type == StreamType::Render && name == "ADSP_RenderStream-0") {
+        Nx2RenderPlayedFrames().fetch_add(actual_frames_written, std::memory_order_relaxed);
     }
 }
 

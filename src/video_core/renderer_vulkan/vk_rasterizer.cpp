@@ -29,6 +29,7 @@
 
 #include "common/assert.h"
 #include "common/dkb_frame_trace.h"
+#include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/exception.h"
 #include "common/logging.h"
 #include "common/scope_exit.h"
@@ -289,14 +290,22 @@ void RasterizerVulkan::ReadMeshEmulationProbe() {
     };
     u64 triangles{}, degenerate{}, outside{}, bad_index{};
     std::string sample;
+    const u32 corners{probe.primitive_vertices};
     for (u32 group = 0; group < probe.groups; ++group) {
         const u64 base{u64{group} * probe.block_words};
         const u64 index_base{base + u64{probe.max_vertices} * probe.vertex_lines};
         for (u32 primitive = 0; primitive < probe.max_primitives; ++primitive) {
-            const std::array<u32, 3> indices{word(index_base + primitive * 3),
-                                             word(index_base + primitive * 3 + 1),
-                                             word(index_base + primitive * 3 + 2)};
-            if (indices[0] == indices[1] && indices[1] == indices[2]) {
+            std::array<u32, 3> storage{};
+            for (u32 corner = 0; corner < corners; ++corner) {
+                storage[corner] = word(index_base + u64{primitive} * corners + corner);
+            }
+            const std::span<const u32> indices{storage.data(), corners};
+            // Slots past the primitive count: 0 0 0 for triangles, the unused marker otherwise.
+            const bool unused{
+                corners == 3
+                    ? indices[0] == indices[1] && indices[1] == indices[2]
+                    : indices[0] == Shader::Backend::SPIRV::MESH_EMULATION_UNUSED_VERTEX};
+            if (unused) {
                 ++degenerate;
                 continue;
             }
@@ -324,9 +333,9 @@ void RasterizerVulkan::ReadMeshEmulationProbe() {
         }
     }
     LOG_INFO(Render_Vulkan,
-             "Mesh emulation probe frame {}: {} groups, {} triangles ({} degenerate slots), {} "
-             "with every vertex off screen, {} with a bad index; first triangles:{}",
-             probe.frame, probe.groups, triangles, degenerate, outside, bad_index, sample);
+             "Mesh emulation probe frame {}: {} groups, {} primitives of {} vertices ({} unused "
+             "slots), {} with every vertex off screen, {} with a bad index; first primitives:{}",
+             probe.frame, probe.groups, triangles, corners, degenerate, outside, bad_index, sample);
 }
 
 const RasterizerVulkan::MeshArena& RasterizerVulkan::AcquireMeshArena() {
@@ -421,6 +430,10 @@ RasterizerVulkan::RasterizerVulkan(Core::Frontend::EmuWindow& emu_window_, Tegra
       fence_manager(*this, gpu, texture_cache, buffer_cache, query_cache, device, scheduler),
       frame_dump(device, memory_allocator, scheduler) {
     scheduler.SetQueryCache(query_cache);
+    VideoCommon::Nx2FastDraw::g_dynamic_strides.store(
+        device.IsExtExtendedDynamicStateSupported() &&
+            device.IsExtVertexInputDynamicStateSupported(),
+        std::memory_order_relaxed);
     buffer_cache.SetPendingCpuWrites(
         [this](const std::function<void(DAddr, size_t)>& callback) {
             gpu.ForEachPendingCpuWrite(callback);
@@ -985,6 +998,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
                 .vertex_lines = setup.vertex_lines,
                 .max_vertices = setup.max_vertices,
                 .max_primitives = setup.max_primitives,
+                .primitive_vertices = setup.primitive_vertices,
                 .position_lines = setup.position_lines,
                 .pending = true,
             };
@@ -1841,8 +1855,61 @@ void RasterizerVulkan::Clear(u32 layer_count) {
                  regs.clear_color[1], regs.clear_color[2], regs.clear_color[3]);
     }
     TraceWindowTarget(*maxwell3d, *gpu_memory, "clear", layer_count);
+    const auto clear_start = std::chrono::steady_clock::now();
     FlushWork();
     gpu_memory->FlushCaching();
+    const auto clear_flushed = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point clear_targets_ready{};
+    // What the texture cache did for this clear's targets (JoinImages, framebuffers).
+    std::optional<TextureCache::RenderTargetStats> clear_tc_stats;
+    SCOPE_EXIT {
+        const auto end = std::chrono::steady_clock::now();
+        const auto us = [](auto d) {
+            return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
+        };
+        if (end - clear_start < std::chrono::microseconds{300}) {
+            return;
+        }
+        static std::atomic<s64> window_start{};
+        static std::atomic<u32> logged{};
+        const s64 now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               end.time_since_epoch()).count();
+        if (now_ms - window_start.load(std::memory_order_relaxed) > 5000) {
+            window_start.store(now_ms, std::memory_order_relaxed);
+            logged.store(0, std::memory_order_relaxed);
+        }
+        if (logged.fetch_add(1, std::memory_order_relaxed) >= 40) {
+            return;
+        }
+        const auto& r = maxwell3d->regs;
+        const s64 targets_us = clear_targets_ready.time_since_epoch().count() != 0
+                                   ? us(clear_targets_ready - clear_flushed)
+                                   : -1;
+        LOG_INFO(Render_Vulkan,
+                 "Slow clear {} us (flush work {} us, render targets {} us): rt0 {:#x} {}x{} fmt "
+                 "{:#x}, zeta {:#x} {} fmt {:#x}, surface {:#x}, layers {}",
+                 us(end - clear_start), us(clear_flushed - clear_start), targets_us,
+                 r.rt[0].Address(), r.rt[0].width, r.rt[0].height, static_cast<u32>(r.rt[0].format),
+                 r.zeta.Address(), r.zeta_enable ? "on" : "off", static_cast<u32>(r.zeta.format),
+                 r.clear_surface.raw, layer_count);
+        if (clear_tc_stats) {
+            const auto& s = *clear_tc_stats;
+            const auto ns_us = [](u64 ns) { return ns / 1000; };
+            LOG_INFO(Render_Vulkan,
+                     "Slow clear texture cache: {} joins, {} created ({} pooled), {} relocated, "
+                     "{} retired, {} deleted, {} "
+                     "overlaps walked ({} bad), {} KiB uploaded; framebuffers {} created, {} "
+                     "removed, {} scanned, {} in the map; {} images; walk {} us, create {} us, "
+                     "upload {} us, delete {} us, framebuffers {} us",
+                     s.joins, s.images_created, s.pooled_images, s.relocated_images,
+                     s.retired_images, s.images_deleted,
+                     s.overlaps_walked, s.bad_overlaps, s.uploaded_bytes >> 10,
+                     s.framebuffers_created, s.framebuffers_removed, s.framebuffers_scanned,
+                     s.framebuffer_map_size, s.image_count,
+                     ns_us(s.walk_ns), ns_us(s.create_ns), ns_us(s.refresh_ns),
+                     ns_us(s.delete_ns), ns_us(s.framebuffer_ns));
+        }
+    };
 
     auto& regs = maxwell3d->regs;
     const bool use_color = regs.clear_surface.R || regs.clear_surface.G || regs.clear_surface.B ||
@@ -2182,6 +2249,7 @@ void RasterizerVulkan::DispatchCompute() {
                 cmdbuf.DispatchIndirect(indirect_buffer, indirect_offset);
             });
         });
+        buffer_cache.RecordComputeExtentProbes();
         buffer_cache.NoteWorkRecorded(true);
         SubmitNx2ListCopies();
         publish_collision_map();
@@ -2233,6 +2301,7 @@ void RasterizerVulkan::DispatchCompute() {
             TextureCacheRuntime::CopyByteAddressedShadow(cmdbuf, *byte_addressed_shadow, true);
         }
     });
+    buffer_cache.RecordComputeExtentProbes();
     if (can_replace || marking_effects) {
         // The deferred native binding may follow DLSS's command buffer bindings.
         scheduler.InvalidateState();
@@ -2699,6 +2768,12 @@ void RasterizerVulkan::FlushCommands() {
     }
     draw_counter = 0;
     pending_native_work = false;
+    // EDEN_NX2_EXP61 (live, 0 = off): nothing recorded since the last submit, nothing to send.
+    // A fence with a download is flushed by InnerFence::Queue and then again here with an empty
+    // command buffer: ~4,600 empty submits a second in Castle Town (fable52_answer_8 s8).
+    if (!scheduler.RecordedSinceSubmit()) {
+        return;
+    }
     // Fences with downloads or queries come here right after queueing: ~9,400 a second in
     // Hyrule Warriors: Age of Imprisonment fights. Batched like the fences themselves.
     if (!scheduler.DeferFlush()) {

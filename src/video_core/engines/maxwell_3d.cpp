@@ -372,6 +372,25 @@ void Maxwell3D::ProcessDirtyRegisters(u32 method, u32 argument) {
         dirty.flags[table[method]] = true;
 }
 
+namespace {
+
+// The occlusion query methods a delta draw may follow. Ocarina of Time resets the samples counter,
+// sets the render condition and reports around most of its draws, and each of these sent the next
+// draw to a full resolve. None of them touches what a delta draw keeps (pipeline, image views,
+// samplers, texture buffer bindings): they record query and conditional rendering commands, and
+// the counter is started again by the draw itself on both paths. The ones that end the render pass
+// (a condition resolved on the GPU) or submit still end the chain through the rasterizer's own
+// checks.
+bool IsFastDrawQueryMethod(u32 method) {
+    constexpr u32 render_enable = MAXWELL3D_REG_INDEX(render_enable);
+    constexpr u32 report = MAXWELL3D_REG_INDEX(report_semaphore);
+    return method == MAXWELL3D_REG_INDEX(clear_report_value) ||
+           method - render_enable < sizeof(Maxwell3D::Regs::RenderEnable) / sizeof(u32) ||
+           method - report < sizeof(Maxwell3D::Regs::ReportSemaphore) / sizeof(u32);
+}
+
+} // Anonymous namespace
+
 bool Maxwell3D::IsFastDrawParameter(u32 method) {
     switch (method) {
     case MAXWELL3D_REG_INDEX(const_buffer.size):
@@ -386,9 +405,18 @@ bool Maxwell3D::IsFastDrawParameter(u32 method) {
     case MAXWELL3D_REG_INDEX(index_buffer.limit_addr_low):
     case MAXWELL3D_REG_INDEX(index_buffer.format):
         return true;
+    case MAXWELL3D_REG_INDEX(vertex_id_base):
+        // Nothing in the renderer reads this register (the draw's base vertex comes from
+        // global_base_vertex_index), yet NVN's base vertex draws write it before and after
+        // every draw, which sent each of them to a full resolve.
+        return true;
+    case 0x154: // MME memory address A and B: where a macro's memory reads go. Ocarina of
+    case 0x155: // Time sets B before the macro that reads each occlusion report; no draw
+                // reads them.
+        return true;
     default:
         return DrawManager::IsInstanceLoopMethod(method) || IsFastDrawDeltaMethod(method) ||
-               IsFastDrawVertexBuffer(method);
+               IsFastDrawVertexBuffer(method) || IsFastDrawQueryMethod(method);
     }
 }
 
@@ -397,6 +425,12 @@ bool Maxwell3D::IsFastDrawVertexBuffer(u32 method) {
     constexpr u32 stream_words = sizeof(Regs::VertexStream) / sizeof(u32);
     if (method >= streams && method < streams + Regs::NumVertexArrays * stream_words) {
         const u32 word = (method - streams) % stream_words;
+        // Word 0, the stride and the enable bit, where the host binds strides dynamically: the
+        // buffers are bound again with their strides on both paths (UpdateGraphicsBuffers), and
+        // the pipeline key holds strides only without extended dynamic state.
+        if (word == 0) {
+            return VideoCommon::Nx2FastDraw::g_dynamic_strides.load(std::memory_order_relaxed);
+        }
         return word == 1 || word == 2; // address_high, address_low
     }
     constexpr u32 sizes = 0x600 / sizeof(u32); // SET_VERTEX_STREAM_SIZE_A/B (NativeVertexStreamSize)
@@ -425,7 +459,15 @@ bool Maxwell3D::IsFastDrawDeltaMethod(u32 method) {
 
 void Maxwell3D::ProcessMethodCall(u32 method, u32 argument, u32 nonshadow_argument, bool is_last_call) {
     if (!DrawManager::IsInstanceLoopMethod(method) && !IsFastDrawDeltaMethod(method)) {
-        VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Method, method);
+        // A fence-flagged release signals a fence: never neutral for the fast draw path.
+        const bool query_method =
+            IsFastDrawQueryMethod(method) &&
+            !(method == MAXWELL3D_REG_INDEX(report_semaphore.query) &&
+              regs.report_semaphore.query.operation == Regs::ReportSemaphore::Operation::Release &&
+              regs.report_semaphore.query.short_query != 0);
+        if (!query_method) {
+            VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Method, method);
+        }
     }
     if (GetNativeMacroEngine().native_turing && method == MAXWELL3D_REG_INDEX(clear_surface)) {
         LOG_DEBUG(HW_GPU, "Native GPU surface clear: value={:#x}", argument);
@@ -1791,7 +1833,10 @@ bool Maxwell3D::FrontRunOnBack(Core::System& system, VideoCommon::GpuSplit& spli
                 AsyncReadback::MaybeReport();
             }
         },
-        fs.parameters);
+        // The call itself does not end the fast draw path: the methods the macro calls end it
+        // or not, as any method does.
+        fs.parameters, VideoCommon::GpuSplit::Writes::Anywhere,
+        VideoCommon::GpuSplit::FastDrawNeutral);
     const u64 position = split.Position();
     fs.back_last = position;
     const bool tracked = fs.control == Regs::ShadowRamControl::Track ||

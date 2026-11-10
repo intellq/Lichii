@@ -406,6 +406,22 @@ void FixedPipelineState::DynamicState::Refresh3(const Maxwell& regs,
     }
 }
 
+void FixedPipelineState::CanonicalizeLogicOp(const DynamicFeatures& features) noexcept {
+    if (!features.has_dynamic_state3_logic_op_enable && !dynamic_state.logic_op_enable) {
+        dynamic_state.logic_op.Assign(0);
+    }
+}
+
+void FixedPipelineState::RekeyRecordedLogicOp(const DynamicFeatures& features) noexcept {
+    // A dynamic enable does not preserve whether logic operations were active in the recording.
+    if (extended_dynamic_state_2_logic_op && !features.has_extended_dynamic_state_2_logic_op &&
+        !extended_dynamic_state_3_enables && !features.has_dynamic_state3_logic_op_enable &&
+        !dynamic_state.logic_op_enable) {
+        extended_dynamic_state_2_logic_op.Assign(0);
+        dynamic_state.logic_op.Assign(0);
+    }
+}
+
 void FixedPipelineState::CanonicalizeNative(u32 generic_read_mask) noexcept {
     if (dynamic_vertex_input) {
         u64 keep = 0;

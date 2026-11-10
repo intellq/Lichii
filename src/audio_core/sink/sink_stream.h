@@ -34,6 +34,9 @@ enum class StreamType {
     Sysmix,
 };
 
+/// Samples consumed by the first renderer output stream, excluding underrun padding.
+std::atomic<u64>& Nx2RenderPlayedFrames();
+
 struct SinkBuffer {
     u64 frames;
     u64 frames_played;

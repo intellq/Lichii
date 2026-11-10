@@ -96,9 +96,12 @@ struct Nx2VideoDecoder::Impl {
     std::optional<FFmpeg::DecoderContext> context;
     SwsContext* scaler{};
     bool open{};
+    bool using_hardware{};
+    bool received_any{};
+    u64 errors_seen{};
+    u32 hardware_failures{};
     H264PacketConverter h264_packets;
-    /// Timestamps of submitted frames not yet output. Frames copied back from a host GPU decoder
-    /// lose theirs and take the earliest one instead.
+    /// Timestamps of submitted frames not yet output, for frames with no timestamp.
     std::multiset<u64> pending_pts;
     std::vector<u8> packet; ///< FFmpeg reads up to AV_INPUT_BUFFER_PADDING_SIZE past the data
 
@@ -108,9 +111,26 @@ struct Nx2VideoDecoder::Impl {
         hardware.reset();
     }
 
+    bool OpenSoftware() {
+        context.reset();
+        hardware.reset();
+        context.emplace(*decoder);
+        pending_pts.clear();
+        h264_packets.Reset();
+        using_hardware = false;
+        received_any = false;
+        hardware_failures = 0;
+        errors_seen = 0;
+        open = context->OpenContext(*decoder);
+        return open;
+    }
+
     void Receive(std::vector<Nx2Picture>& pictures) {
         while (auto frame = context->ReceiveFrame()) {
             const AVFrame* f = frame->GetFrame();
+            if (f->width <= 0 || f->height <= 0) {
+                continue;
+            }
             const s64 stamp = f->best_effort_timestamp != AV_NOPTS_VALUE ? f->best_effort_timestamp
                                                                          : f->pts;
             u64 pts{};
@@ -123,6 +143,7 @@ struct Nx2VideoDecoder::Impl {
                 pts = *pending_pts.begin();
                 pending_pts.erase(pending_pts.begin());
             }
+            received_any = true;
             pictures.push_back({static_cast<u32>(f->width), static_cast<u32>(f->height), pts,
                                 std::move(frame)});
         }
@@ -143,14 +164,18 @@ Nx2VideoDecoder::Nx2VideoDecoder(std::string_view mime) : impl{std::make_unique<
         return;
     }
     impl->context.emplace(*impl->decoder);
-    AVCodecContext* const context = impl->context->GetCodecContext();
     const std::string_view decoder_name = impl->decoder->GetCodec()->name;
     const bool gpu = Settings::values.nvdec_emulation.GetValue() == Settings::NvdecEmulation::Gpu;
     if (gpu) {
         impl->hardware.emplace();
-        impl->hardware->InitializeForDecoder(*impl->context, *impl->decoder);
+        impl->using_hardware = impl->hardware->InitializeForDecoder(*impl->context, *impl->decoder);
     }
     impl->open = impl->context->OpenContext(*impl->decoder);
+    if (!impl->open && impl->using_hardware) {
+        LOG_WARNING(HW_GPU, "nx2 video: GPU decoder failed to open, trying CPU");
+        impl->OpenSoftware();
+    }
+    AVCodecContext* const context = impl->context->GetCodecContext();
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now() - start)
                         .count();
@@ -201,6 +226,21 @@ void Nx2VideoDecoder::Decode(std::span<const u8> data, u64 pts, std::vector<Nx2P
     impl->pending_pts.insert(pts);
     impl->context->SendPacket(packet);
     impl->Receive(pictures);
+    if (impl->using_hardware && !impl->context->GetCodecContext()->hw_device_ctx) {
+        impl->using_hardware = false;
+    }
+    if (impl->using_hardware) {
+        const u64 errors = impl->context->ErrorCount();
+        if (errors == impl->errors_seen) {
+            impl->hardware_failures = 0;
+        } else {
+            impl->errors_seen = errors;
+            if (!impl->received_any || ++impl->hardware_failures >= 3) {
+                LOG_WARNING(HW_GPU, "nx2 video: GPU decoder failed, trying CPU");
+                impl->OpenSoftware();
+            }
+        }
+    }
 }
 
 void Nx2VideoDecoder::Drain(std::vector<Nx2Picture>& pictures) {

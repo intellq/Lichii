@@ -29,6 +29,7 @@
 #include "video_core/host1x/host1x.h"
 #include "video_core/host1x/syncpoint_manager.h"
 #include "video_core/nx2_fast_draw.h"
+#include "video_core/nx2.h"
 #include "video_core/nx2_profile.h"
 #include "video_core/rasterizer_interface.h"
 
@@ -119,9 +120,7 @@ public:
             if (delay_fence) {
                 uncommitted_operations.emplace_back(std::move(func));
             }
-            pending_operations.emplace_back(std::move(uncommitted_operations));
-            uncommitted_operations.clear(); // moved-from: make it empty explicitly
-            uncommitted_operations.reserve(64);
+            pending_operations.emplace_back(TakeUncommittedOperations());
         }
         pending_flushes.push_back(committed_flushes);
         QueueFence(new_fence);
@@ -150,6 +149,7 @@ public:
             LOG_ERROR(HW_GPU, "Signal of syncpoint {} past the table, ignored", value);
             return;
         }
+        Tegra::Nx2NoteSyncpointSignal(value); // render-frame clock (EDEN_NX2_RENDER_CLOCK_SYNCPT)
         syncpoint_manager.IncrementGuest(value);
         std::function<void()> func([this, value] { syncpoint_manager.IncrementHost(value); });
         SignalFence(std::move(func));
@@ -240,6 +240,11 @@ private:
             for (auto& operation : operations) {
                 operation();
             }
+            operations.clear();
+            {
+                std::scoped_lock lock{uncommitted_guard};
+                KeepSpareOperations(operations);
+            }
             {
                 std::unique_lock lock(ring_guard);
                 delayed_destruction_ring.Push(std::move(current_fence));
@@ -321,6 +326,11 @@ private:
                 query_cache.PopAsyncFlushes();
                 for (auto& operation : released.operations) {
                     operation();
+                }
+                released.operations.clear();
+                {
+                    std::scoped_lock lock{uncommitted_guard};
+                    KeepSpareOperations(released.operations);
                 }
             }
             if (!batch.empty()) {
@@ -456,7 +466,25 @@ private:
     // Vectors, not deques: MSVC's deque of std::function holds one element per block, so every
     // queued operation (one per query report, about 1000 a frame in busy scenes) allocated a block.
     using OperationList = std::vector<std::function<void()>>;
+    // Callers hold uncommitted_guard. Clear operations outside the lock before returning a list.
+    OperationList TakeUncommittedOperations() {
+        OperationList taken = std::move(uncommitted_operations);
+        if (spare_operations.empty()) {
+            uncommitted_operations = OperationList{};
+            uncommitted_operations.reserve(64);
+        } else {
+            uncommitted_operations = std::move(spare_operations.back());
+            spare_operations.pop_back();
+        }
+        return taken;
+    }
+    void KeepSpareOperations(OperationList& operations) {
+        if (spare_operations.size() < 32 && operations.capacity() != 0) {
+            spare_operations.push_back(std::move(operations));
+        }
+    }
     OperationList uncommitted_operations;
+    std::vector<OperationList> spare_operations;
     std::deque<OperationList> pending_operations;
     std::deque<u8> pending_flushes; ///< Per fence: the caches that committed downloads
     u32 skipped_fences{}; ///< Empty fences skipped since the last one made (GPU thread only)

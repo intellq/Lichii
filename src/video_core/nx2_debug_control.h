@@ -18,6 +18,7 @@
 /// Without the server nothing is posted and the per-frame cost is one relaxed atomic load.
 namespace VideoCore::Nx2Debug {
 
+inline int Experiment(int id) { return id == 43 ? 2 : id == 58 ? 1 : 0; }
 struct CaptureRequest {
     u64 id;
     std::filesystem::path directory;

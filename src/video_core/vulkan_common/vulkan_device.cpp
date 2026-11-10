@@ -7,11 +7,13 @@
 #include <algorithm>
 #include <array>
 #include <bitset>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <string_view>
 #include <thread>
 #include "common/container/unordered_map.h"
 #include "common/container/unordered_set.h"
@@ -46,6 +48,23 @@
 namespace Vulkan {
 using namespace Common::Literals;
 namespace {
+// Matches Mesa's boolean parsing of its environment options.
+bool EnvFlagSet(const char* name) {
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+        return false;
+    }
+    const std::string_view v{value};
+    for (const std::string_view truthy : {"1", "true", "t", "yes", "y"}) {
+        if (std::ranges::equal(v, truthy, [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) == b;
+            })) {
+            return true;
+        }
+    }
+    return false;
+}
+
 namespace Alternatives {
 constexpr std::array STENCIL8_UINT{
     VK_FORMAT_D16_UNORM_S8_UINT,
@@ -1121,6 +1140,19 @@ void Device::SaveShader(std::span<const u32> spirv) const {
     }
 }
 
+bool Device::DriverCachesPipelines() const noexcept {
+    switch (properties.driver.driverID) {
+    case VK_DRIVER_ID_NVIDIA_PROPRIETARY:
+    case VK_DRIVER_ID_AMD_PROPRIETARY:
+        return true;
+    case VK_DRIVER_ID_MESA_RADV:
+        // RADV uses Mesa's on-disk shader cache unless the user turns it off.
+        return !EnvFlagSet("MESA_SHADER_CACHE_DISABLE") && !EnvFlagSet("MESA_GLSL_CACHE_DISABLE");
+    default:
+        return false;
+    }
+}
+
 bool Device::ComputeIsOptimalAstcSupported() const {
     static constexpr std::array<VkFormat, 28> astc_formats = {
         VK_FORMAT_ASTC_4x4_UNORM_BLOCK,   VK_FORMAT_ASTC_4x4_SRGB_BLOCK,
@@ -1755,10 +1787,38 @@ void Device::RemoveUnsuitableExtensions() {
     features.mesh_shader.primitiveFragmentShadingRateMeshShader = VK_FALSE;
     features.mesh_shader.meshShaderQueries = VK_FALSE;
     extensions.mesh_shader = features.mesh_shader.taskShader && features.mesh_shader.meshShader;
+    // EDEN_NX2_NO_DYNAMIC_LOGIC_OP=1: no dynamic logic op, as AMD's Windows driver (tests the
+    // conversion of NVIDIA-recorded precompiled pipelines on an NVIDIA GPU).
+    if (features.extended_dynamic_state2.extendedDynamicState2LogicOp &&
+        std::getenv("EDEN_NX2_NO_DYNAMIC_LOGIC_OP") != nullptr) {
+        LOG_WARNING(Render_Vulkan, "EDEN_NX2_NO_DYNAMIC_LOGIC_OP: dynamic logic op disabled");
+        features.extended_dynamic_state2.extendedDynamicState2LogicOp = VK_FALSE;
+    }
     // EDEN_NX2_FORCE_MESH_FALLBACK=1: leave VK_EXT_mesh_shader disabled, so task/mesh draws take
     // the compute fallback a device without it uses.
     if (extensions.mesh_shader && std::getenv("EDEN_NX2_FORCE_MESH_FALLBACK") != nullptr) {
         LOG_WARNING(Render_Vulkan, "EDEN_NX2_FORCE_MESH_FALLBACK: VK_EXT_mesh_shader disabled");
+        extensions.mesh_shader = false;
+    }
+    // The Mesh Shaders setting. Automatic leaves the extension disabled on AMD drivers: native
+    // task/mesh draws hang AMD GPUs (#316, #670, #672, #871). RADV resets the GPU on RX 6000, 7000
+    // and 9000 cards (Mesa 26.0 to 27.0-devel; 26.2.6 still hangs, though it recovers more often),
+    // and AMD's own driver times out on the Radeon 780M. The compute fallback avoids the hangs, but
+    // it can be slower in scenes full of foliage and skips the mesh programs it can't run
+    // (per-primitive outputs, primitives other than triangles, layered output). Native keeps the
+    // extension, for a setup that no longer hangs; Compute disables it on every device.
+    const Settings::MeshShaderMode mesh_mode = Settings::values.mesh_shaders.GetValue();
+    const VkDriverId mesh_driver = properties.driver.driverID;
+    const bool amd_mesh_driver = mesh_driver == VK_DRIVER_ID_MESA_RADV ||
+                                 mesh_driver == VK_DRIVER_ID_AMD_PROPRIETARY ||
+                                 mesh_driver == VK_DRIVER_ID_AMD_OPEN_SOURCE;
+    if (extensions.mesh_shader && mesh_mode == Settings::MeshShaderMode::Compute) {
+        LOG_INFO(Render_Vulkan, "Mesh Shaders setting: task/mesh draws use the compute fallback");
+        extensions.mesh_shader = false;
+    } else if (extensions.mesh_shader && mesh_mode == Settings::MeshShaderMode::Automatic &&
+               amd_mesh_driver) {
+        LOG_INFO(Render_Vulkan, "AMD driver: task/mesh draws use the compute fallback, because "
+                                "native mesh draws hang the GPU (Mesh Shaders: Native keeps them)");
         extensions.mesh_shader = false;
     }
     RemoveExtensionFeatureIfUnsuitable(extensions.mesh_shader, features.mesh_shader,

@@ -349,6 +349,15 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, use_video_framerate, tr("Sync to framerate of video playback"),
            tr("Run the game at normal speed during video playback, even when the framerate is "
               "unlocked."));
+    INSERT(Settings, oot_30fps, tr("Ocarina of Time: 30 FPS mode (lower-end PCs)"),
+           tr("Caps Ocarina of Time at 30 FPS. The game keeps its normal speed. Takes effect at "
+              "once; the 60 FPS / 30 FPS button in the status bar switches it too."));
+    INSERT(Settings, oot_high_refresh, QString(), QString());
+    INSERT(Settings, oot_high_refresh_cap, tr("OoT: high refresh rate (experimental)"),
+           tr("Lets Ocarina of Time run above 60 FPS, up to the chosen cap, at its normal speed. "
+              "Untested in much of the game: timers, cutscenes or minigames may run off. Takes "
+              "effect at once; Ctrl+U switches it while you play. The 30 FPS mode overrides "
+              "it."));
     INSERT(Settings, mkw_30fps, tr("Mario Kart World: 30 FPS mode"),
            tr("Forces the game to use its native 30 FPS mode at normal game speed. "
               "Takes effect after restarting the game."));
@@ -371,6 +380,14 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
 
     INSERT(Settings, vertex_input_dynamic_state, tr("Vertex Input Dynamic State"),
            tr("Enables vertex input dynamic state feature for better quality and performance."));
+
+    INSERT(Settings, mesh_shaders, tr("Mesh Shaders"),
+           tr("How Switch 2 games' mesh shader geometry is drawn.\n"
+              "Native uses the GPU's mesh shaders. Compute Fallback emulates them with compute "
+              "shaders: it can be slower in scenes with a lot of foliage, and it can't draw every "
+              "kind of mesh program.\n"
+              "Automatic uses the compute fallback on AMD GPUs, where native mesh shaders can hang "
+              "the GPU, and native mesh shaders everywhere else."));
 
     INSERT(
         Settings, sample_shading, tr("Sample Shading"),
@@ -607,6 +624,14 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(OotAntiAliasing, Game, tr("Game")),
                               PAIR(OotAntiAliasing, NoSharpening, tr("No sharpening")),
                           }});
+    translations->insert({Settings::EnumMetadata<Settings::OotRefreshCap>::Index(),
+                          {
+                              PAIR(OotRefreshCap, Display, tr("Monitor refresh rate")),
+                              PAIR(OotRefreshCap, Hz90, tr("90 FPS")),
+                              PAIR(OotRefreshCap, Hz120, tr("120 FPS")),
+                              PAIR(OotRefreshCap, Hz144, tr("144 FPS")),
+                              PAIR(OotRefreshCap, Hz165, tr("165 FPS")),
+                          }});
     translations->insert({Settings::EnumMetadata<Settings::AspectRatio>::Index(),
                           {
                               PAIR(AspectRatio, R16_9, tr("Default (16:9)")),
@@ -794,6 +819,13 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(ExtendedDynamicState, EDS1, tr("ExtendedDynamicState 1")),
                               PAIR(ExtendedDynamicState, EDS2, tr("ExtendedDynamicState 2")),
                               PAIR(ExtendedDynamicState, EDS3, tr("ExtendedDynamicState 3")),
+                          }});
+
+    translations->insert({Settings::EnumMetadata<Settings::MeshShaderMode>::Index(),
+                          {
+                              PAIR(MeshShaderMode, Automatic, tr("Automatic")),
+                              PAIR(MeshShaderMode, Native, tr("Native")),
+                              PAIR(MeshShaderMode, Compute, tr("Compute Fallback")),
                           }});
 
     translations->insert({Settings::EnumMetadata<Settings::GameListMode>::Index(),

@@ -268,6 +268,8 @@ struct FixedPipelineState {
     /// vertex program does not read (vertex input is dynamic), blend equations and factors of
     /// attachments without blending, and attachments past the last colour target.
     void CanonicalizeNative(u32 generic_read_mask) noexcept;
+    void CanonicalizeLogicOp(const DynamicFeatures& features) noexcept;
+    void RekeyRecordedLogicOp(const DynamicFeatures& features) noexcept;
 
     size_t Hash() const noexcept;
 

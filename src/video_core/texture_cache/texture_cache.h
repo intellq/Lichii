@@ -32,6 +32,7 @@
 #include "video_core/guest_memory.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
 #include "video_core/nx2.h"
+#include "video_core/nx2_debug_control.h"
 #include "video_core/nx2_profile.h"
 #include "video_core/render_trace.h"
 #include "video_core/texture_cache/conversion.h"
@@ -148,16 +149,16 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
     bool evict_old_costly = false;
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
+    // EDEN_NX2_TC_MIN_AGE=<frames>: never evict images used more recently (thrash tests).
+    static const u64 min_age = [] {
+        const char* value = std::getenv("EDEN_NX2_TC_MIN_AGE");
+        return value != nullptr ? std::strtoull(value, nullptr, 10) : 0ULL;
+    }();
     const auto Configure = [&](bool allow_aggressive) {
         high_priority_mode = out_of_memory || total_used_memory >= expected_memory;
         aggressive_mode =
             allow_aggressive && (out_of_memory || total_used_memory >= critical_memory);
         ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
-        // EDEN_NX2_TC_MIN_AGE=<frames>: never evict images used more recently (thrash tests).
-        static const u64 min_age = [] {
-            const char* value = std::getenv("EDEN_NX2_TC_MIN_AGE");
-            return value != nullptr ? std::strtoull(value, nullptr, 10) : 0ULL;
-        }();
         ticks_to_destroy = (std::max)(ticks_to_destroy, min_age);
         num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
     };
@@ -176,7 +177,17 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
             (!high_priority_mode && must_download)) {
             return false;
         }
+        // EDEN_NX2_EXP57 (live, 0 = off): at most one download with a full wait for the GPU per
+        // frame unless an allocation failed. A player's first high-priority pass downloaded
+        // image after image and froze for 3 s (fable52_answer_3 s7); the rest wait for later
+        // frames.
+        if (must_download && !out_of_memory && false &&
+            gc_waited_frame == frame_tick) {
+            ++gc_downloads_deferred;
+            return false;
+        }
         if (must_download) {
+            gc_waited_frame = frame_tick;
             auto map = runtime.DownloadStagingBuffer(image.unswizzled_size_bytes);
             const auto copies = FullDownloadCopies(image.info);
             image.DownloadMemory(map, copies);
@@ -256,6 +267,40 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
             lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
         }
     };
+    // A bad overlap that a newer GPU-written image covers holds nothing a later read can want:
+    // delete it after 4 unused frames, without a readback. Ocarina of Time's guard house leaves
+    // ~45 a frame (a shadow map sized by the camera moves every target behind it), far more than
+    // the age-based pass below frees.
+    if (const u64 bad_overlap_age = (std::max)(u64{4}, min_age); frame_tick > bad_overlap_age) {
+        size_t visits = 512;
+        lru_cache.ForEachItemBelow(frame_tick - bad_overlap_age, [&](ImageId image_id) {
+            if (visits-- == 0) {
+                return true;
+            }
+            auto& image = slot_images[image_id];
+            if (False(image.flags & ImageFlagBits::BadOverlap) ||
+                True(image.flags & ImageFlagBits::IsDecoding)) {
+                return false;
+            }
+            const bool superseded = std::ranges::any_of(
+                image.overlapping_images, [&](ImageId overlap_id) {
+                    const auto& overlap = slot_images[overlap_id];
+                    return True(overlap.flags & ImageFlagBits::GpuModified) &&
+                           overlap.modification_tick > image.modification_tick;
+                });
+            if (!superseded) {
+                return false;
+            }
+            MarkStale(image); // before UntrackImage (see MarkStale)
+            if (True(image.flags & ImageFlagBits::Tracked)) {
+                UntrackImage(image, image_id);
+            }
+            ++gc_deletes;
+            UnregisterImage(image_id);
+            DeleteImage(image_id, image.scale_tick > frame_tick + 5);
+            return false;
+        });
+    }
     Configure(false);
     static const u64 old_age = [] {
         const char* value = std::getenv("EDEN_NX2_TC_OLD_AGE");
@@ -332,7 +377,19 @@ void TextureCache<P>::ApplyThresholdOverrides(bool log) {
     const u64 budget_expected = expected_memory;
     u64 max_critical = MaxCriticalMemory;
     if constexpr (requires { runtime.GetDeviceMemoryBudget(); }) {
-        max_critical = (std::max)(max_critical, runtime.GetDeviceMemoryBudget() / 8 * 5);
+        const u64 budget = runtime.GetDeviceMemoryBudget();
+        max_critical = (std::max)(max_critical, budget / 8 * 5);
+        // Larger budgets, native titles only: 5/8 left ~7.3 GiB on a 12 GB RX 6700 XT, under what
+        // Ocarina's Kokiri Forest keeps alive, so every aggressive pass evicted its CostlyLoad ASTC
+        // textures (a 6144x6144 5x5 one, 31 MiB) and the game re-created them ~128 frames later:
+        // a 24 ms texture stall every ~3 s. From 10 GiB of budget on, keep 2.5 GiB for everything
+        // else; between 8 and 10 GiB ramp up to that from 5/8, so a budget moving across a size
+        // does not move the threshold in a step. Only the native path re-reads the budget (every
+        // 30 frames), so only it may sit this close to the budget.
+        if (native_thresholds_applied && budget > 8_GiB) {
+            const u64 ramp = budget + budget / 4 - 5_GiB; // 5/8 of it at 8 GiB, joins below at 10
+            max_critical = (std::max)(max_critical, (std::min)(ramp, budget - 2560_MiB));
+        }
     }
     critical_memory = (std::min)(critical_memory, max_critical);
     expected_memory =
@@ -471,6 +528,11 @@ void TextureCache<P>::TickFrame() {
     if constexpr (requires { runtime.CurrentTick(); }) {
         while (!gpu_sentenced_images.empty() &&
                runtime.IsFree(gpu_sentenced_images.front().tick)) {
+            // EXP42: the GPU is done with it, so its VkImage may go to the runtime's pool for
+            // the next image of its shape (fable_answer_12 2B).
+            if constexpr (requires(Image& image) { image.ReleaseToPool(); }) {
+                gpu_sentenced_images.front().image.ReleaseToPool();
+            }
             gpu_sentenced_bytes -= gpu_sentenced_images.front().bytes;
             gpu_sentenced_images.pop_front();
         }
@@ -485,6 +547,10 @@ void TextureCache<P>::TickFrame() {
             total_used_memory -= (std::min)(total_used_memory, bytes);
         }
         total_used_memory -= (std::min)(total_used_memory, gpu_sentenced_bytes);
+        // EXP42's pooled images are deleted images too: the pool caps and ages them itself.
+        if constexpr (requires { runtime.PooledImageBytes(); }) {
+            total_used_memory -= (std::min)(total_used_memory, runtime.PooledImageBytes());
+        }
     }
     // EDEN_NX2_MEM_TRACE=1: every 2 s, what the cache holds next to what the process and the
     // driver report (memory climbs).
@@ -572,9 +638,9 @@ void TextureCache<P>::TickFrame() {
         if constexpr (requires { runtime.LogMemoryStatistics(); }) {
             runtime.LogMemoryStatistics();
         }
-        LOG_INFO(HW_GPU, "Texture cache last 600 frames: created {} images, deleted {} (collector {}, {} costly, {} downloaded), {} async decodes, ASTC {} opaque / {} alpha",
+        LOG_INFO(HW_GPU, "Texture cache last 600 frames: created {} images, deleted {} (collector {}, {} costly, {} downloaded, {} downloads deferred), {} async decodes, ASTC {} opaque / {} alpha",
                  images_created, images_deleted, gc_deletes + gc_costly_deletes, gc_costly_deletes,
-                 gc_download_deletes,
+                 gc_download_deletes, gc_downloads_deferred,
                  async_decodes_queued, astc_opaque_images, astc_alpha_images);
         LOG_INFO(HW_GPU, "Texture cache last 600 frames: {} uploads from guest memory, {} MiB (largest {} MiB, {} by layer)",
                  images_uploaded, uploaded_bytes >> 20, largest_upload >> 20, layer_uploads);
@@ -599,9 +665,11 @@ void TextureCache<P>::TickFrame() {
         created_shapes.clear();
         // The per-image and per-shape tallies only feed debug lines: skip them while those are off.
         debug_stats = Common::Log::IsLevelEnabled(Common::Log::Class::HW_GPU, Common::Log::Level::Debug);
-        gc_deletes = gc_costly_deletes = gc_download_deletes = async_decodes_queued = 0;
+        gc_deletes = gc_costly_deletes = gc_download_deletes = gc_downloads_deferred =
+            async_decodes_queued = 0;
         images_created = images_deleted = 0;
     }
+    SweepColdImages();
     // An image that could not be made at all: the driver is out of memory whatever the counts
     // say, so collect as at the critical threshold.
     bool out_of_memory = false;
@@ -637,6 +705,22 @@ void TextureCache<P>::TickFrame() {
 
     runtime.TickFrame();
     ++frame_tick;
+    if (relocation_seen && frame_tick % 600 == 0) {
+        u32 guarded_shapes = 0;
+        for (const auto& [key, shape] : relocation_shapes) {
+            guarded_shapes += shape.guard != 0 ? 1 : 0;
+        }
+        LOG_INFO(HW_GPU,
+                 "Render target relocation (EXP43={}) last 600 frames: {} candidates, {} kept by "
+                 "the guard, {} relocated, {} retired early, {} over 2+ images of their shape; "
+                 "{} of {} shapes guarded",
+                 VideoCore::Nx2Debug::Experiment(43), relocation_candidates, relocation_guarded,
+                 relocation_relocated, relocation_retired, relocation_crowded, guarded_shapes,
+                 relocation_shapes.size());
+        relocation_candidates = relocation_guarded = relocation_relocated = relocation_retired =
+            relocation_crowded = 0;
+    }
+    TickRenderClock();
 
     if constexpr (IMPLEMENTS_ASYNC_DOWNLOADS) {
         for (auto& buffer : async_buffers_death_ring) {
@@ -644,6 +728,262 @@ void TextureCache<P>::TickFrame() {
         }
         async_buffers_death_ring.clear();
     }
+}
+
+/// EDEN_NX2_TC_COLD_FRAMES (the cold sweep's K, 0 = off).
+inline u64 TcColdFrames() {
+    static const u64 frames = [] {
+        const char* value = std::getenv("EDEN_NX2_TC_COLD_FRAMES");
+        return value != nullptr ? std::strtoull(value, nullptr, 10) : 0ULL;
+    }();
+    return frames;
+}
+
+template <class P>
+void TextureCache<P>::WatchColdImage(ImageId image_id) {
+    if (TcColdFrames() == 0 || !RelocationShaped(slot_images[image_id].info)) {
+        return;
+    }
+    if (cold_watch_set.insert(image_id).second) {
+        cold_watch.emplace_back(image_id, frame_tick);
+    }
+}
+
+template <class P>
+bool TextureCache<P>::ColdSuperseded(ImageId image_id, const ImageBase& image) {
+    const u64 shape = RelocationShapeKey(image.info);
+    const u64 touched = lru_cache.Tick(image.lru_index);
+    bool superseded = false;
+    ForEachImageInRegion(image.cpu_addr, image.guest_size_bytes,
+                         [&](ImageId other_id, Image& other) {
+                             if (other_id == image_id ||
+                                 False(other.flags & ImageFlagBits::Registered) ||
+                                 RelocationShapeKey(other.info) == shape ||
+                                 lru_cache.Tick(other.lru_index) <= touched) {
+                                 return false;
+                             }
+                             superseded = true;
+                             return true;
+                         });
+    return superseded;
+}
+
+template <class P>
+void TextureCache<P>::SweepColdImages() {
+    const u64 cold_frames = TcColdFrames();
+    if (cold_frames == 0) {
+        return;
+    }
+    static const bool sweep_guarded = [] {
+        const char* value = std::getenv("EDEN_NX2_TC_COLD_GUARDED");
+        return value != nullptr && value[0] == '1';
+    }();
+    constexpr u32 MaxPerFrame = 16;
+    constexpr u64 MaxWatchFrames = 600; // then a watched image that never got BadOverlap leaves
+    constexpr ImageFlagBits excluded =
+        ImageFlagBits::Sparse | ImageFlagBits::SparseLayers | ImageFlagBits::SparseTiles |
+        ImageFlagBits::UnwrittenSparse | ImageFlagBits::Unbacked | ImageFlagBits::Converted |
+        ImageFlagBits::AsynchronousDecode | ImageFlagBits::IsDecoding | ImageFlagBits::Remapped |
+        ImageFlagBits::CostlyLoad;
+    const auto queued = [](ImageId image_id, const auto& downloads) {
+        return std::ranges::any_of(downloads, [image_id](const auto& download) {
+            return download.is_swizzle && download.object_id == image_id;
+        });
+    };
+    const auto bound = [this](const ImageBase& image) {
+        return std::ranges::any_of(image.image_view_ids, [this](ImageViewId view) {
+            return render_targets.depth_buffer_id == view ||
+                   std::ranges::find(render_targets.color_buffer_ids, view) !=
+                       render_targets.color_buffer_ids.end();
+        });
+    };
+    u32 deleted = 0;
+    size_t index = 0;
+    while (index < cold_watch.size()) {
+        const ImageId image_id = cold_watch[index].first;
+        const u64 watched_at = cold_watch[index].second;
+        const auto drop = [&] {
+            cold_watch_set.erase(image_id);
+            cold_watch[index] = cold_watch.back();
+            cold_watch.pop_back();
+        };
+        if (!slot_images.contains(image_id)) {
+            drop();
+            continue;
+        }
+        Image& image = slot_images[image_id];
+        if (!RelocationShaped(image.info) || False(image.flags & ImageFlagBits::Registered) ||
+            True(image.flags & excluded)) {
+            drop();
+            continue;
+        }
+        if (False(image.flags & ImageFlagBits::BadOverlap)) {
+            // The newest image of a chain has one overlap; the next drift makes it bad.
+            if (frame_tick - watched_at > MaxWatchFrames) {
+                drop();
+            } else {
+                ++index;
+            }
+            continue;
+        }
+        // Touched (prepared, bound, sampled) in the last K host frames.
+        if (frame_tick - lru_cache.Tick(image.lru_index) < cold_frames) {
+            ++index;
+            continue;
+        }
+        bool superseded = false; // EXP58 chose it
+        if (True(image.flags & ImageFlagBits::GpuModified)) {
+            // Its contents exist only on the GPU and the collector would not download them
+            // either (BadOverlap): only where nothing says they may be read again.
+            if (image.relocation_guard_noted != 0 || image.info.forced_flushed ||
+                image.info.dma_downloaded) {
+                ++cold_kept_read;
+                drop();
+                continue;
+            }
+            const auto shape = relocation_shapes.find(RelocationShapeKey(image.info));
+            const u8 guard = shape != relocation_shapes.end() ? shape->second.guard : 0;
+            if ((guard & GuardCpuRead) != 0 ||
+                (!sweep_guarded && (guard & (GuardSampled | GuardLoaded)) != 0)) {
+                // EDEN_NX2_EXP58 (live, 0 = off; fable52_answer_2 3.3 step 4): a guarded image
+                // still dies once it has been untouched for SupersededFrames and a render target
+                // of another shape, touched since, covers its memory: the game reused that memory
+                // for another layout, so the old contents have no reader left. Deleted without a
+                // download, as the collector would. The guard was made for relocation (same
+                // shape, live contents); these piled up (350k "kept" in 600 frames) until the
+                // collector's bursts. Never for shapes the CPU read.
+                constexpr u64 SupersededFrames = 60;
+                const bool superseded_sweep =
+                    VideoCore::Nx2Debug::Experiment(58) != 0 && (guard & GuardCpuRead) == 0;
+                const u64 age = frame_tick - lru_cache.Tick(image.lru_index);
+                if (superseded_sweep && age < SupersededFrames &&
+                    frame_tick - watched_at <= MaxWatchFrames) {
+                    ++index; // looked at again when old enough
+                    continue;
+                }
+                if (!superseded_sweep || age < SupersededFrames ||
+                    !ColdSuperseded(image_id, image)) {
+                    ++cold_kept_guarded;
+                    drop();
+                    continue;
+                }
+                superseded = true;
+            }
+        }
+        if (queued(image_id, uncommitted_downloads) ||
+            std::ranges::any_of(committed_downloads,
+                                [&](const auto& downloads) { return queued(image_id, downloads); }) ||
+            bound(image)) {
+            ++index;
+            continue;
+        }
+        if (deleted >= MaxPerFrame) {
+            break;
+        }
+        // As the collector deletes an image it does not download.
+        MarkStale(image); // before UntrackImage (see MarkStale)
+        if (True(image.flags & ImageFlagBits::Tracked)) {
+            UntrackImage(image, image_id);
+        }
+        UnregisterImage(image_id);
+        DeleteImage(image_id);
+        ++deleted;
+        cold_superseded += superseded ? 1 : 0;
+        drop();
+    }
+    cold_deleted += deleted;
+    if (frame_tick % 600 == 0) {
+        LOG_INFO(HW_GPU,
+                 "Cold sweep (EDEN_NX2_TC_COLD_FRAMES={}{}) last 600 frames: {} chain images "
+                 "deleted ({} of them guarded but superseded, EXP58), {} kept as GPU-written and "
+                 "guarded, {} kept as read later; {} watched; {} images, device memory {} MiB "
+                 "(expected {} MiB)",
+                 cold_frames, sweep_guarded ? ", guarded too" : "", cold_deleted, cold_superseded,
+                 cold_kept_guarded, cold_kept_read, cold_watch.size(), slot_images.size(),
+                 total_used_memory >> 20, expected_memory >> 20);
+        cold_deleted = cold_kept_guarded = cold_kept_read = cold_superseded = 0;
+    }
+}
+
+template <class P>
+void TextureCache<P>::TickRenderClock() {
+    static const bool clock_env = [] {
+        const char* value = std::getenv("EDEN_NX2_RENDER_CLOCK");
+        return value != nullptr && value[0] == '1';
+    }();
+    const bool enabled = clock_env;
+    Tegra::g_nx2_render_clock_wanted.store(enabled, std::memory_order_relaxed);
+    const u64 counter = Tegra::g_nx2_render_frame.load(std::memory_order_relaxed);
+    render_clock_idle = counter != render_clock_last_counter ? 0 : render_clock_idle + 1;
+    render_clock_last_counter = counter;
+    // Live while the counter advanced in this host frame or the one before (a count may land in
+    // the next tick); two host frames without one and frame_tick takes over again.
+    const bool live = enabled && counter != 0 && render_clock_idle < 2;
+    if (live != render_clock_live) {
+        // Continue from the current value, so the clock never goes back across a switch.
+        render_clock_base = RenderFrame() + 1;
+        render_clock_source_base = live ? counter : frame_tick;
+        render_clock_live = live;
+        ++render_clock_switches;
+        if (live && !render_clock_logged) {
+            render_clock_logged = true;
+            LOG_INFO(HW_GPU,
+                     "Render frame clock (EDEN_NX2_RENDER_CLOCK): live at host frame {} ({}); "
+                     "last_write_frame, cross-frame reads and the same-frame rule follow it",
+                     frame_tick, fmt::format("syncpoint {}", Tegra::g_nx2_render_clock_syncpt));
+        }
+    }
+    render_clock_live_frames += render_clock_live ? 1 : 0;
+    if (frame_tick % 600 != 0 || (!enabled && !relocation_seen)) {
+        return;
+    }
+    // The shapes refused most often as written this frame.
+    std::vector<std::pair<u32, u64>> refused;
+    for (auto& [key, shape] : relocation_shapes) {
+        if (shape.same_frame_refused != 0) {
+            refused.emplace_back(shape.same_frame_refused, key);
+            shape.same_frame_refused = 0;
+        }
+    }
+    const size_t top = (std::min)(refused.size(), size_t{3});
+    std::partial_sort(refused.begin(), refused.begin() + top, refused.end(),
+                      [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::string refused_text;
+    for (size_t i = 0; i < top; ++i) {
+        const u64 key = refused[i].second;
+        refused_text += fmt::format("{}format {} {}x{} {}", i == 0 ? "" : ", ", key >> 56,
+                                    (key >> 18) & 0x3FFFF, key & 0x3FFFF, refused[i].first);
+    }
+    // Syncpoints signalled in these frames, most first: one at about 1 per host frame may end
+    // each frame (EDEN_NX2_RENDER_CLOCK_SYNCPT).
+    std::string syncpt_text;
+    if (enabled) {
+        std::vector<std::pair<u32, u32>> signals;
+        for (u32 id = 0; id < Tegra::Nx2SyncpointSignalSlots; ++id) {
+            const u32 count =
+                Tegra::g_nx2_syncpoint_signals[id].exchange(0, std::memory_order_relaxed);
+            if (count != 0) {
+                signals.emplace_back(count, id);
+            }
+        }
+        std::sort(signals.rbegin(), signals.rend());
+        for (size_t i = 0; i < (std::min)(signals.size(), size_t{4}); ++i) {
+            syncpt_text += fmt::format(" {}:{:.2f}", signals[i].second, signals[i].first / 600.0);
+        }
+    }
+    const u64 counted = counter - render_clock_window_counter;
+    render_clock_window_counter = counter;
+    LOG_INFO(HW_GPU,
+             "Render frame clock (EDEN_NX2_RENDER_CLOCK={}) last 600 frames: {} render frames "
+             "({:.2f} per host frame), live {} of 600 frames, {} switches; {} relocation "
+             "candidates refused as written this frame{}{}; syncpoint signals per host frame:{}",
+             enabled ? 1 : 0, counted, counted / 600.0, render_clock_live_frames,
+             render_clock_switches, relocation_same_frame, top != 0 ? " (" : "",
+             top != 0 ? refused_text + ")" : std::string{},
+             syncpt_text.empty() ? std::string{" none"} : syncpt_text);
+    render_clock_live_frames = 0;
+    render_clock_switches = 0;
+    relocation_same_frame = 0;
 }
 
 template <class P>
@@ -1283,6 +1623,10 @@ void TextureCache<P>::DownloadMemory(DAddr cpu_addr, size_t size) {
         if (!IsDownloadable(image)) {
             return;
         }
+        if (True(image.flags & ImageFlagBits::GpuModified) &&
+            (image.relocation_guard_noted & GuardCpuRead) == 0 && RelocationShaped(image.info)) {
+            NoteRelocationGuard(image, GuardCpuRead);
+        }
         image.flags &= ~ImageFlagBits::GpuModified;
         images.push_back(image_id);
     });
@@ -1356,6 +1700,9 @@ std::optional<VideoCore::RasterizerDownloadArea> TextureCache<P>::GetFlushArea(D
         }
         area->preemtive &= image.info.forced_flushed;
         image.info.forced_flushed = true;
+        if ((image.relocation_guard_noted & GuardCpuRead) == 0 && RelocationShaped(image.info)) {
+            NoteRelocationGuard(image, GuardCpuRead);
+        }
     });
     return area;
 }
@@ -3043,6 +3390,138 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
             }
         }
     }
+    // A new render target that the clear binding it overwrites whole (every channel, the whole
+    // image) needs no upload from guest memory first: Ocarina of Time creates ~4 such targets a
+    // frame outdoors, and uploading them was ~15% of the GPU back thread.
+    const auto relocation_clear = [&] {
+        if (!clearing_render_targets || !join_copies_to_do.empty() ||
+            new_info.type != ImageType::e2D || new_info.resources.levels != 1 ||
+            new_info.resources.layers != 1 || new_info.num_samples != 1) {
+            return false;
+        }
+        const auto& regs = maxwell3d->regs;
+        const auto& surface = regs.clear_surface;
+        if (surface.layer != 0) {
+            return false;
+        }
+        const u32 width = new_info.size.width;
+        const u32 height = new_info.size.height;
+        if (regs.clear_control.use_scissor != 0) {
+            const auto& scissor = regs.scissor_test[0];
+            if (scissor.min_x != 0 || scissor.min_y != 0 || scissor.max_x < width ||
+                scissor.max_y < height) {
+                return false;
+            }
+        }
+        // The clear covers the framebuffer's render area, the smallest bound target.
+        for (u32 index = 0; index < regs.rt_control.count && index < NUM_RT; ++index) {
+            const auto& rt = regs.rt[index];
+            if (rt.Address() != 0 && rt.format != Tegra::RenderTargetFormat::NONE &&
+                (rt.width < width || rt.height < height)) {
+                return false;
+            }
+        }
+        if (regs.zeta_enable && regs.zeta.Address() != 0 &&
+            (regs.zeta_size.width < width || regs.zeta_size.height < height)) {
+            return false;
+        }
+        const bool is_depth_target = regs.zeta_enable && regs.zeta.Address() == gpu_addr;
+        const bool full_stencil = surface.S && regs.stencil_front_mask == 0xFF;
+        switch (VideoCore::Surface::GetFormatType(new_info.format)) {
+        case VideoCore::Surface::SurfaceType::ColorTexture: {
+            const u32 index = surface.RT;
+            return surface.R && surface.G && surface.B && surface.A && index < NUM_RT &&
+                   index < regs.rt_control.count && regs.rt[index].Address() == gpu_addr;
+        }
+        case VideoCore::Surface::SurfaceType::Depth:
+            return is_depth_target && surface.Z;
+        case VideoCore::Surface::SurfaceType::Stencil:
+            return is_depth_target && full_stencil;
+        case VideoCore::Surface::SurfaceType::DepthStencil:
+            return is_depth_target && surface.Z && full_stencil;
+        default:
+            return false;
+        }
+    };
+    // EXP43 (fable_answer_12 2A): a cleared render target that drifted off exactly one image of
+    // its shape takes that image's place (2: the image moves here) or retires it at once (1).
+    if (clearing_render_targets && !join_bad_overlap_ids.empty() && join_copies_to_do.empty() &&
+        join_left_aliased_ids.empty() && join_right_aliased_ids.empty() &&
+        join_ignore_textures.empty()) {
+        if (const ImageId old_id = RelocationCandidate(new_info, gpu_addr, cpu_addr);
+            old_id && relocation_clear()) {
+            const GPUVAddr old_gpu_addr = slot_images[old_id].gpu_addr;
+            const s64 drift = static_cast<s64>(gpu_addr) - static_cast<s64>(old_gpu_addr);
+            RelocationShape& shape = relocation_shapes[RelocationShapeKey(new_info)];
+            const int mode = VideoCore::Nx2Debug::Experiment(43);
+            relocation_seen = true;
+            ++relocation_candidates;
+            if (shape.guard != 0) {
+                ++relocation_guarded;
+            } else {
+                if (!shape.candidate_logged) {
+                    shape.candidate_logged = true;
+                    LOG_INFO(HW_GPU,
+                             "Render target relocation candidate (EXP43={}): format {} {}x{} at "
+                             "{:#x}, drifted {:+} bytes from the image at {:#x}",
+                             mode, static_cast<u32>(new_info.format), new_info.size.width,
+                             new_info.size.height, gpu_addr, drift, old_gpu_addr);
+                }
+                const bool relocate = mode == 2 || mode == 3;
+                if ((relocate || mode == 1) && !shape.relocated_logged) {
+                    shape.relocated_logged = true;
+                    LOG_INFO(HW_GPU,
+                             "Render target {} (EXP43={}): format {} {}x{}, {:#x} -> {:#x}",
+                             relocate ? "relocated" : "retired early", mode,
+                             static_cast<u32>(new_info.format), new_info.size.width,
+                             new_info.size.height, old_gpu_addr, gpu_addr);
+                }
+                if (relocate) {
+                    ++relocation_relocated;
+                    ++rt_stats.relocated_images;
+                    RelocateImage(old_id, gpu_addr, cpu_addr);
+                    // The other bad overlaps are linked to it as to a new image (below).
+                    Image& moved = slot_images[old_id];
+                    for (const ImageId other_id : join_bad_overlap_ids) {
+                        if (other_id == old_id) {
+                            continue;
+                        }
+                        ImageBase& other = slot_images[other_id];
+                        other.overlapping_images.push_back(old_id);
+                        moved.overlapping_images.push_back(other_id);
+                        if (other.info.resources.levels == 1 && other.info.block.depth == 0 &&
+                            other.overlapping_images.size() > 1) {
+                            other.flags |= ImageFlagBits::BadOverlap;
+                        }
+                        if (moved.info.resources.levels == 1 && moved.info.block.depth == 0 &&
+                            moved.overlapping_images.size() > 1) {
+                            moved.flags |= ImageFlagBits::BadOverlap;
+                        }
+                        WatchColdImage(other_id);
+                    }
+                    WatchColdImage(old_id);
+                    return old_id;
+                }
+                if (mode == 1) {
+                    // 2C: the predecessor goes now instead of 50 frames later; a new image is
+                    // made below as without the switch.
+                    ++relocation_retired;
+                    ++rt_stats.retired_images;
+                    Image& old = slot_images[old_id];
+                    MarkStale(old); // before UntrackImage (see MarkStale)
+                    if (True(old.flags & ImageFlagBits::Tracked)) {
+                        UntrackImage(old, old_id);
+                    }
+                    UnregisterImage(old_id);
+                    DeleteImage(old_id);
+                    join_bad_overlap_ids.erase(std::remove(join_bad_overlap_ids.begin(),
+                                                           join_bad_overlap_ids.end(), old_id),
+                                               join_bad_overlap_ids.end());
+                }
+            }
+        }
+    }
+    const auto create_start = std::chrono::steady_clock::now();
     const ImageId new_image_id = slot_images.insert(runtime, new_info, gpu_addr, cpu_addr);
     if constexpr (requires(const Image& image) { image.OutOfMemory(); }) {
         if (slot_images[new_image_id].OutOfMemory()) {
@@ -3099,16 +3578,18 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
     // A new render target that the clear binding it overwrites whole (every channel, the whole
     // image) needs no upload from guest memory first: Ocarina of Time creates ~4 such targets a
     // frame outdoors, and uploading them was ~15% of the GPU back thread.
+    // Which test refused the last call (EXP7's new-image line).
+    const char* clear_refusal = "";
     const auto overwritten_by_clear = [&] {
         if (!clearing_render_targets || !join_copies_to_do.empty() ||
             new_info.type != ImageType::e2D || new_info.resources.levels != 1 ||
             new_info.resources.layers != 1 || new_info.num_samples != 1) {
-            return false;
+            return (clear_refusal = "not clearing, joins, or not a plain 2D target", false);
         }
         const auto& regs = maxwell3d->regs;
         const auto& surface = regs.clear_surface;
         if (surface.layer != 0) {
-            return false;
+            return (clear_refusal = "clear layer", false);
         }
         const u32 width = new_info.size.width;
         const u32 height = new_info.size.height;
@@ -3116,16 +3597,23 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
             return false;
         }
         // The clear covers the framebuffer's render area, the smallest bound target.
+        // EDEN_NX2_EXP56 (live, 0 = off): not for the clear's own depth target, which follows
+        // IsFullClear as an existing one does (its contents are dropped, the colour targets'
+        // sizes aside). Ocarina binds a 1920x1024 depth buffer under 1280x720 colour and this
+        // rule uploaded its 7.5 MiB from guest memory every frame (fable52_answer_3 s7).
+        const bool depth_follows_full_clear = true &&
+                                              regs.zeta_enable && regs.zeta.Address() == gpu_addr;
         for (u32 index = 0; index < regs.rt_control.count && index < NUM_RT; ++index) {
             const auto& rt = regs.rt[index];
-            if (rt.Address() != 0 && rt.format != Tegra::RenderTargetFormat::NONE &&
+            if (!depth_follows_full_clear && rt.Address() != 0 &&
+                rt.format != Tegra::RenderTargetFormat::NONE &&
                 (rt.width < width || rt.height < height)) {
-                return false;
+                return (clear_refusal = "a smaller colour target", false);
             }
         }
         if (regs.zeta_enable && regs.zeta.Address() != 0 &&
             (regs.zeta_size.width < width || regs.zeta_size.height < height)) {
-            return false;
+            return (clear_refusal = "a smaller depth target", false);
         }
         const bool is_depth_target = regs.zeta_enable && regs.zeta.Address() == gpu_addr;
         const bool full_stencil = surface.S && regs.stencil_front_mask == 0xFF;
@@ -3138,10 +3626,13 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
                    regs.rt[index].Address() == gpu_addr;
         }
         case VideoCore::Surface::SurfaceType::Depth:
+            clear_refusal = (is_depth_target && surface.Z) ? "" : "depth: not the bound target or no Z";
             return is_depth_target && surface.Z;
         case VideoCore::Surface::SurfaceType::Stencil:
+            clear_refusal = (is_depth_target && full_stencil) ? "" : "stencil: not the bound target or mask";
             return is_depth_target && full_stencil;
         case VideoCore::Surface::SurfaceType::DepthStencil:
+            clear_refusal = (is_depth_target && surface.Z && full_stencil) ? "" : "depth-stencil: not bound, no Z or stencil mask";
             return is_depth_target && surface.Z && full_stencil;
         default:
             return false;
@@ -3184,6 +3675,10 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
             new_image.overlapping_images.size() > 1) {
             new_image.flags |= ImageFlagBits::BadOverlap;
         }
+        WatchColdImage(aliased_id);
+    }
+    if (!join_bad_overlap_ids.empty()) {
+        WatchColdImage(new_image_id);
     }
 
     // The copy from an alias into the new image, or null when the loop below skips it.
@@ -4013,15 +4508,7 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
         ASSERT_MSG(num_removed_aliases == 1, "Invalid number of removed aliases: {}",
                    num_removed_aliases);
     }
-    for (const ImageId overlap_id : image.overlapping_images) {
-        ImageBase& other_image = slot_images[overlap_id];
-        [[maybe_unused]] const size_t num_removed_overlaps = std::erase_if(
-            other_image.overlapping_images,
-            [image_id](const ImageId other_overlap_id) { return other_overlap_id == image_id; });
-        other_image.CheckBadOverlapState();
-        ASSERT_MSG(num_removed_overlaps == 1, "Invalid number of removed overlapps: {}",
-                   num_removed_overlaps);
-    }
+    DropOverlapLinks(image_id);
     for (const ImageViewId image_view_id : image_view_ids) {
         if (!immediate_delete) {
             sentenced_image_view.Push(std::move(slot_image_views[image_view_id]));
@@ -4057,6 +4544,83 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
             std::ranges::fill(channel_info.compute_image_table.LiveBoundIds(), CORRUPT_ID);
         }
 #endif
+        channel_info.graphics_image_table.Invalidate();
+        channel_info.compute_image_table.Invalidate();
+    }
+    has_deleted_images = true;
+}
+
+template <class P>
+void TextureCache<P>::DropOverlapLinks(ImageId image_id) {
+    ImageBase& image = slot_images[image_id];
+    for (const ImageId overlap_id : image.overlapping_images) {
+        ImageBase& other_image = slot_images[overlap_id];
+        [[maybe_unused]] const size_t num_removed_overlaps = std::erase_if(
+            other_image.overlapping_images,
+            [image_id](const ImageId other_overlap_id) { return other_overlap_id == image_id; });
+        other_image.CheckBadOverlapState();
+        ASSERT_MSG(num_removed_overlaps == 1, "Invalid number of removed overlapps: {}",
+                   num_removed_overlaps);
+    }
+}
+
+template <class P>
+void TextureCache<P>::RelocateImage(ImageId image_id, GPUVAddr gpu_addr, DAddr cpu_addr) {
+    Image& image = slot_images[image_id];
+    // 1. The GPU's data at the old address is lost, as when the collector deletes the image.
+    MarkStale(image); // before UntrackImage (see MarkStale)
+    if (True(image.flags & ImageFlagBits::Tracked)) {
+        UntrackImage(image, image_id);
+    }
+    UnregisterImage(image_id);
+    // RegisterImage below counts it again.
+    total_used_memory -= (std::min)(total_used_memory, ImageMemoryBytes(image));
+    // 2. No overlap links: the chain of drifted images does not form.
+    DropOverlapLinks(image_id);
+    image.overlapping_images.clear();
+    image.CheckBadOverlapState();
+    // 3. Out of the alloc entry of the old address (InsertImage files it under the new one).
+    if (const auto alloc_it = image_allocs_table.find(image.gpu_addr);
+        alloc_it != image_allocs_table.end()) {
+        const ImageAllocId alloc_id = alloc_it->second;
+        std::vector<ImageId>& alloc_images = slot_image_allocs[alloc_id].images;
+        std::erase(alloc_images, image_id);
+        if (alloc_images.empty()) {
+            image_allocs_table.erase(alloc_it);
+            slot_image_allocs.erase(alloc_id);
+        }
+    } else {
+        ASSERT_MSG(false, "Relocating an image without an alloc at {:#x}", image.gpu_addr);
+    }
+    // Lookups by address (descriptors, bound render targets) must not keep finding its views
+    // under the old address; the views themselves, and the framebuffers keyed by them, stay.
+    for (const ImageViewId image_view_id : image.image_view_ids) {
+        std::ranges::replace(render_targets.color_buffer_ids, image_view_id, ImageViewId{});
+        if (render_targets.depth_buffer_id == image_view_id) {
+            render_targets.depth_buffer_id = ImageViewId{};
+        }
+    }
+    RemoveImageViewReferences(image.image_view_ids);
+    // 4. The new address. Contents count as the guest's (the clear overwrites them whole, and
+    // PrepareImage's invalidate path drops the upload, as for a new image).
+    image.gpu_addr = gpu_addr;
+    image.cpu_addr = cpu_addr;
+    image.cpu_addr_end = cpu_addr + image.guest_size_bytes;
+    image.flags &= ~ImageFlagBits::GpuModified;
+    image.flags |= ImageFlagBits::CpuModified;
+    image.last_write_frame = ~u64{0};
+    image.relocation_guard_noted = 0;
+    // 5. Page tables, map view, page filter, LRU.
+    RegisterImage(image_id);
+    // 6. As DeleteImage: render targets and descriptor tables are looked up again.
+    auto& dirty = maxwell3d->dirty.flags;
+    dirty[Dirty::RenderTargets] = true;
+    dirty[Dirty::ZetaBuffer] = true;
+    for (size_t rt = 0; rt < NUM_RT; ++rt) {
+        dirty[Dirty::ColorBuffer0 + rt] = true;
+    }
+    for (size_t c : active_channel_ids) {
+        auto& channel_info = channel_storage[c];
         channel_info.graphics_image_table.Invalidate();
         channel_info.compute_image_table.Invalidate();
     }
@@ -4110,6 +4674,146 @@ template <class P>
 void TextureCache<P>::MarkModification(ImageBase& image) noexcept {
     image.flags |= ImageFlagBits::GpuModified;
     SetModificationTick(slot_images, image, ++modification_tick);
+    image.last_write_frame = RenderFrame();
+}
+
+template <class P>
+ImageId TextureCache<P>::RelocationCandidate(const ImageInfo& new_info, GPUVAddr gpu_addr,
+                                             DAddr cpu_addr) {
+    if (!RelocationShaped(new_info)) {
+        return ImageId{};
+    }
+    // Exactly one bad overlap of the same shape and layout; others (a neighbouring target of
+    // another shape the drift moved into) stay bad overlaps, as for a new image.
+    const auto same_shape = [&new_info](const ImageInfo& info) {
+        return RelocationShaped(info) && info.format == new_info.format &&
+               info.size.width == new_info.size.width &&
+               info.size.height == new_info.size.height &&
+               info.size.depth == new_info.size.depth && info.block == new_info.block &&
+               info.layer_stride == new_info.layer_stride &&
+               info.maybe_unaligned_layer_stride == new_info.maybe_unaligned_layer_stride &&
+               info.tile_width_spacing == new_info.tile_width_spacing &&
+               info.native_tiling == new_info.native_tiling &&
+               info.rescaleable == new_info.rescaleable &&
+               info.downscaleable == new_info.downscaleable &&
+               info.is_sparse == new_info.is_sparse && info.astc_opaque == new_info.astc_opaque;
+    };
+    // Predecessors: images of the shape the GPU did not write in this frame (one it did may
+    // still be read in this frame; it is never taken, and not counted).
+    ImageId old_id{};
+    u32 predecessors = 0;
+    u32 same_frame = 0;
+    const u64 render_frame = RenderFrame();
+    for (const ImageId overlap_id : join_bad_overlap_ids) {
+        const ImageBase& overlap = slot_images[overlap_id];
+        if (!same_shape(overlap.info)) {
+            continue;
+        }
+        if (overlap.last_write_frame == render_frame) {
+            ++same_frame;
+            continue;
+        }
+        ++predecessors;
+        // EXP43=3 takes the most recently modified of several.
+        if (!old_id || overlap.modification_tick > slot_images[old_id].modification_tick) {
+            old_id = overlap_id;
+        }
+    }
+    if (predecessors == 0) {
+        if (same_frame != 0) {
+            // Refused as written this frame (the render-frame clock line counts them by shape).
+            ++relocation_same_frame;
+            ++relocation_shapes[RelocationShapeKey(new_info)].same_frame_refused;
+            relocation_seen = true;
+        }
+        return ImageId{};
+    }
+    if (predecessors > 1) {
+        // A chain from before the switch (or two targets of the shape in reach): EXP43=1 and 2
+        // need exactly one.
+        ++relocation_crowded;
+        relocation_seen = true;
+        if (VideoCore::Nx2Debug::Experiment(43) != 3) {
+            return ImageId{};
+        }
+    }
+    const ImageBase& old = slot_images[old_id];
+    // Read by the CPU.
+    if (old.info.forced_flushed || old.info.dma_downloaded) {
+        return ImageId{};
+    }
+    constexpr ImageFlagBits excluded =
+        ImageFlagBits::Sparse | ImageFlagBits::SparseLayers | ImageFlagBits::SparseTiles |
+        ImageFlagBits::UnwrittenSparse | ImageFlagBits::Unbacked | ImageFlagBits::Converted |
+        ImageFlagBits::AsynchronousDecode | ImageFlagBits::IsDecoding | ImageFlagBits::Remapped |
+        ImageFlagBits::Alias | ImageFlagBits::CostlyLoad | ImageFlagBits::Rescaled |
+        ImageFlagBits::TrimmedLevels;
+    if (True(old.flags & excluded) || False(old.flags & ImageFlagBits::Registered) ||
+        old.HasScaled() || !old.aliased_images.empty()) {
+        return ImageId{};
+    }
+    // A drift, not a reuse of distant memory; real CPU addresses on both sides (no stand-ins).
+    const u64 distance =
+        gpu_addr > old.gpu_addr ? gpu_addr - old.gpu_addr : old.gpu_addr - gpu_addr;
+    constexpr DAddr StandInBase = ~(1ULL << 40);
+    if (distance == 0 || distance >= old.guest_size_bytes || cpu_addr >= StandInBase ||
+        old.cpu_addr >= StandInBase) {
+        return ImageId{};
+    }
+    if (new_info.is_sparse && !gpu_memory->IsContinuousRange(gpu_addr, old.guest_size_bytes)) {
+        return ImageId{};
+    }
+    // Registered in this channel's GPU page table (UnregisterImage clears that one).
+    const auto& gpu_pages = *channel_state->gpu_page_table;
+    const auto page = gpu_pages.find(old.gpu_addr >> YUZU_PAGEBITS);
+    if (page == gpu_pages.end() || std::ranges::find(page->second, old_id) == page->second.end()) {
+        return ImageId{};
+    }
+    // No download queued for it.
+    const auto queued = [old_id](const auto& downloads) {
+        return std::ranges::any_of(downloads, [old_id](const auto& download) {
+            return download.is_swizzle && download.object_id == old_id;
+        });
+    };
+    if (queued(uncommitted_downloads) || std::ranges::any_of(committed_downloads, queued)) {
+        return ImageId{};
+    }
+    // Not bound as another target of this clear.
+    const auto& regs = maxwell3d->regs;
+    for (u32 index = 0; index < regs.rt_control.count && index < NUM_RT; ++index) {
+        const auto& rt = regs.rt[index];
+        const GPUVAddr address = rt.Address();
+        if (address != 0 && address != gpu_addr && rt.format != Tegra::RenderTargetFormat::NONE &&
+            old.OverlapsGPU(address, 1)) {
+            return ImageId{};
+        }
+    }
+    if (regs.zeta_enable && regs.zeta.Address() != 0 && regs.zeta.Address() != gpu_addr &&
+        old.OverlapsGPU(regs.zeta.Address(), 1)) {
+        return ImageId{};
+    }
+    return old_id;
+}
+
+template <class P>
+void TextureCache<P>::NoteRelocationGuard(ImageBase& image, RelocationGuard reason) {
+    image.relocation_guard_noted |= reason;
+    RelocationShape& shape = relocation_shapes[RelocationShapeKey(image.info)];
+    if ((shape.guard & reason) != 0) {
+        return;
+    }
+    shape.guard |= reason;
+    // Each shape's first trip of each reason (a handful per session).
+    LOG_INFO(HW_GPU,
+             "Render target relocation guard (EXP43): format {} {}x{} now never relocates: {} "
+             "(image at {:#x}, written in frame {}, frame {})",
+             static_cast<u32>(image.info.format), image.info.size.width, image.info.size.height,
+             reason == GuardSampled  ? "sampled in a later frame"
+             : reason == GuardLoaded ? "rendered to without a clear in a later frame"
+                                     : "read by the CPU",
+             image.gpu_addr,
+             image.last_write_frame == ~u64{0} ? s64{-1} : static_cast<s64>(image.last_write_frame),
+             RenderFrame());
 }
 
 template <class P>
@@ -4185,6 +4889,7 @@ void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool 
         }
     }
     Image& image = slot_images[image_id];
+    CheckCrossFrameUse(image, is_modification, invalidate);
     if (invalidate) {
         image.flags &= ~(ImageFlagBits::CpuModified | ImageFlagBits::GpuModified);
         if (False(image.flags & ImageFlagBits::Tracked)) {

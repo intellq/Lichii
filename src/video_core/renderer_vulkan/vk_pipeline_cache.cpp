@@ -16,10 +16,12 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <map>
 #include <optional>
 #include <random>
 #include <span>
 #include <thread>
+#include <tuple>
 #include <unordered_set>
 #include <vector>
 #include <bit>
@@ -61,6 +63,7 @@
 #include "video_core/renderer_vulkan/vk_descriptor_pool.h"
 #include "video_core/renderer_vulkan/vk_pipeline_binaries.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
+#include "video_core/nx2_precompile.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache_records.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_cache_v2.h"
@@ -390,18 +393,37 @@ std::atomic<u32> precompiled_drawn{};
 std::atomic<u32> precompiled_failed{};
 std::atomic<u32> precompiled_created{};
 std::atomic<u32> precompiled_from_spirv{};
+std::atomic<u32> precompiled_per_stage{};
 std::atomic<std::chrono::nanoseconds::rep> precompiled_gpu_ns{};
 std::mutex precompiled_reasons_mutex;
 std::map<std::string, u32> precompiled_reasons;
 
-void CountPrecompiledReason(const char* reason) {
+void CountPrecompiledReason(std::string_view reason) {
     std::scoped_lock lock{precompiled_reasons_mutex};
-    ++precompiled_reasons[reason];
+    ++precompiled_reasons[std::string{reason}];
 }
 
-// NX2INFO3: storage buffer descriptors keep their write extent. A file of another version is
-// prepared again.
-constexpr std::string_view PrecompiledInfosMagic{"NX2INFO3"};
+// NX2INFO4: a table of each stage's info by its program and recorded environment follows the
+// blobs. A file of another version is prepared again.
+constexpr std::string_view PrecompiledInfosMagic{"NX2INFO4"};
+
+/// Most recorded environments a stage's lookup checks against the game's state: a program kept
+/// in many environments (other texture types, pointer states) is checked against the first ones.
+constexpr size_t MaxStageCandidates = 16;
+
+/// The pixel format traits a translation used: integer formats always (sampled textures), the
+/// others only with descriptors that use them (FileEnvironment::AnswersHoldFor).
+u32 UsedFormatTraits(const Shader::Info& info) {
+    u32 traits = FileEnvironment::FormatTraitInteger;
+    if (std::ranges::any_of(info.image_descriptors,
+                            [](const auto& desc) { return desc.is_byte_addressed; })) {
+        traits |= FileEnvironment::FormatTraitByteAddressed;
+    }
+    if (!info.texture_buffer_descriptors.empty()) {
+        traits |= FileEnvironment::FormatTraitSnorm;
+    }
+    return traits;
+}
 
 /// EDEN_NX2_PRECOMPILED_FAST=0: precompiled pipelines are translated on the GPU thread like the
 /// others (their kept infos and SPIR-V unused), to compare.
@@ -642,8 +664,12 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
       buffer_cache{buffer_cache_}, texture_cache{texture_cache_}, shader_notify{shader_notify_},
       use_asynchronous_shaders{Settings::values.use_asynchronous_shaders.GetValue()},
       use_vulkan_pipeline_cache{Settings::values.use_vulkan_driver_pipeline_cache.GetValue() &&
-                                !device_.DriverCachesPipelines()},
+                                (!device_.DriverCachesPipelines() ||
+                                 device_.GetDriverID() == VK_DRIVER_ID_MESA_RADV)},
       serialization_thread(1, "VkPipelineSerialization", {}, Common::ThreadPlacement::Background) {
+    if (Settings::values.use_vulkan_driver_pipeline_cache.GetValue() && !use_vulkan_pipeline_cache) {
+        LOG_INFO(Render_Vulkan, "Driver keeps its own pipeline cache, not saving a Vulkan one");
+    }
     const auto& float_control{device.FloatControlProperties()};
     const VkDriverId driver_id{device.GetDriverID()};
     const VkShaderStageFlags subgroup_stages{device.GetSubgroupSupportedStages()};
@@ -999,6 +1025,7 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
     } else {
         graphics_key.state.Refresh(*maxwell3d, dynamic_features);
     }
+    graphics_key.state.CanonicalizeLogicOp(dynamic_features);
 
     if (current_pipeline) {
         GraphicsPipeline* const next{current_pipeline->Next(graphics_key)};
@@ -1114,6 +1141,23 @@ ComputePipeline* PipelineCache::CurrentComputePipeline(u64& native_key) {
         precompiled_failed.fetch_add(1, std::memory_order_relaxed);
         retired_compute_pipelines.emplace_back(scheduler.CurrentTick(), std::move(entry.pipeline));
         entry = CreateComputePipeline(key, shader);
+    } else if (entry.pending) {
+        if (entry.pending->pipeline->IsBuilt()) {
+            const auto rebuilt{std::move(entry.pending)};
+            if (rebuilt->pipeline->IsBound()) {
+                LOG_INFO(Render_Vulkan, "Compute shader {:016x}: rebuilt pipeline in use",
+                         key.unique_hash);
+                retired_compute_pipelines.emplace_back(scheduler.CurrentTick(),
+                                                       std::move(entry.pipeline));
+                entry = std::move(*rebuilt);
+            } else {
+                LOG_WARNING(Render_Vulkan, "Keeping compute shader {:016x}: rebuild failed",
+                            key.unique_hash);
+                retired_compute_pipelines.emplace_back(scheduler.CurrentTick(),
+                                                       std::move(rebuilt->pipeline));
+                entry.rebuilds = MaxComputeRebuilds;
+            }
+        }
     } else if (!entry.null_pointer_slots.empty() && entry.rebuilds < MaxComputeRebuilds &&
                StaleNullPointerSlot(entry)) {
         // The translation dropped accesses through a pointer that was null back then. Which slots
@@ -1121,13 +1165,13 @@ ComputePipeline* PipelineCache::CurrentComputePipeline(u64& native_key) {
         // binds, null now or not: a null pointer binds nothing.
         auto rebuilt{CreateComputePipeline(key, shader, entry.mapped_pointers)};
         if (rebuilt.pipeline) {
-            if (entry.pipeline) {
-                retired_compute_pipelines.emplace_back(scheduler.CurrentTick(),
-                                                       std::move(entry.pipeline));
-            }
             rebuilt.rebuilds = entry.rebuilds + 1;
             rebuilt.used = entry.used;
-            entry = std::move(rebuilt);
+            if (entry.pipeline) {
+                entry.pending = std::make_unique<ComputePipelineCacheEntry>(std::move(rebuilt));
+            } else {
+                entry = std::move(rebuilt);
+            }
         } else {
             // Keep the working translation when the new one cannot be built (for example a
             // narrow access that now stays global across two buffers), and stop retrying.
@@ -1499,6 +1543,8 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
                     env_ptrs.push_back(&env);
                 }
                 CanonicalizeNativeKey(key, env_ptrs);
+                key.state.RekeyRecordedLogicOp(dynamic_features);
+                key.state.CanonicalizeLogicOp(dynamic_features);
                 canonical_keys[index] = key;
             }};
         try {
@@ -1750,7 +1796,7 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
     records.clear();
     log.reset();
 
-    PreparePrecompiled(pipeline_cache_filename.parent_path(), stop_loading, callback);
+    PreparePrecompiled(title_id, pipeline_cache_filename.parent_path(), stop_loading, callback);
 
     if (use_vulkan_pipeline_cache) {
         SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
@@ -2002,6 +2048,7 @@ bool DriverCachesPipelines(const Device& device) {
     switch (device.GetDriverID()) {
     case VK_DRIVER_ID_NVIDIA_PROPRIETARY:
     case VK_DRIVER_ID_AMD_PROPRIETARY:
+    case VK_DRIVER_ID_MESA_RADV:
         return true;
     default:
         return false;
@@ -2009,7 +2056,7 @@ bool DriverCachesPipelines(const Device& device) {
 }
 } // Anonymous namespace
 
-void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
+void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path& base_dir,
                                        std::stop_token stop_loading,
                                        const VideoCore::DiskResourceLoadCallback& callback) {
     // A load before this one may hold the kept infos open, which the step rewrites and renames.
@@ -2018,6 +2065,7 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
     kept_infos_generation.fetch_add(1, std::memory_order_acq_rel);
     precompiled_records.clear();
     precompiled_compute_records.clear();
+    precompiled_stages.clear();
     const char* enabled = std::getenv("EDEN_NX2_PRECOMPILED");
     if (enabled && enabled[0] == '0') {
         return;
@@ -2033,7 +2081,17 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
     // count, u32 record count, u32 reserved; per environment u64 offset and u64 size of a
     // GenericEnvironment::Serialize blob; per record u8 kind (0 graphics, 1 compute), u8
     // environment count, u16 reserved, u32 environment indices in stage order, then the key.
-    const auto path = base_dir / fmt::format("precompiled.fork-v{}.nx2prep", CACHE_VERSION);
+    auto path = base_dir / fmt::format("precompiled.fork-v{}.nx2prep", CACHE_VERSION);
+    if (VideoCommon::Nx2Precompile::Mode() != 0) {
+        const auto assembled = VideoCommon::Nx2Precompile::EnsurePrecompiledFile(
+            title_id, base_dir, CACHE_VERSION, stop_loading);
+        if (stop_loading.stop_requested()) {
+            return;
+        }
+        if (!assembled.empty()) {
+            path = assembled;
+        }
+    }
     std::error_code error;
     const auto file_size = std::filesystem::file_size(path, error);
     if (error) {
@@ -2059,17 +2117,19 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
     const auto infos_path =
         base_dir / fmt::format("precompiled_infos.fork-v{}.bin", CACHE_VERSION);
     const auto& resolution = Settings::values.resolution_info;
+    const bool radv_vulkan_cache =
+        use_vulkan_pipeline_cache && device.GetDriverID() == VK_DRIVER_ID_MESA_RADV;
     const std::string stamp = fmt::format(
-        "{} {} {:#x} {} {} scale {} {}/{} bloom {} loops {} debug {}\n", file_size, modified,
+        "{} {} {:#x} {} {} scale {} {}/{} bloom {} loops {} debug {}{}\n", file_size, modified,
         device.GetDriverVersion(), Common::g_scm_rev, device.GetModelName(), resolution.active,
         resolution.up_scale, resolution.down_shift, Settings::values.fix_bloom_effects.GetValue(),
         Settings::values.disable_shader_loop_safety_checks.GetValue(),
-        Settings::values.renderer_debug.GetValue());
+        Settings::values.renderer_debug.GetValue(), radv_vulkan_cache ? " radv-vulkan-cache-1" : "");
     const char* force = std::getenv("EDEN_NX2_PRECOMPILED_FORCE");
     if (!(force && force[0] == '1')) {
         std::ifstream stamp_file(stamp_path, std::ios::binary);
         const std::string previous{std::istreambuf_iterator<char>(stamp_file), {}};
-        if (previous == stamp) {
+        if (previous == stamp && (!radv_vulkan_cache || vulkan_pipeline_cache_loaded)) {
             if (LoadPrecompiledInfos(path, infos_path, stamp)) {
                 LOG_INFO(Render_Vulkan, "Precompiled pipelines already prepared for this driver");
                 return;
@@ -2162,7 +2222,9 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
         std::string line;
         size_t next{};
         u32 count{};
-        if (std::getline(progress_file, line) && line + '\n' == stamp &&
+        // The explicit RADV cache is saved only after preparation. An interrupted preparation
+        // must restart so that entries from before the interruption are also saved.
+        if (!radv_vulkan_cache && std::getline(progress_file, line) && line + '\n' == stamp &&
             (progress_file >> next >> count)) {
             start_index = std::min(next, total);
             restarts = count + 1;
@@ -2197,12 +2259,13 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
     // The shader infos and SPIR-V of each graphics pipeline built, kept once each (most
     // pipelines share their programs' infos with others, and stages their SPIR-V), written to
     // the file as they come.
-    // NX2INFO3: magic, u32 stamp size, the stamp, u64 index offset, the blobs (an info:
+    // NX2INFO4: magic, u32 stamp size, the stamp, u64 index offset, the blobs (an info:
     // Shader::SerializeInfo; SPIR-V: one zstd frame of its words); at the index: u32 record
     // count, u32 blob count, per record u64 key hash, u8 environment count, u8 kind (0
     // graphics, 1 compute: its info and SPIR-V are stage 0's), 2 bytes 0, u32
     // environments[5], u32 info blobs[5] and u32 SPIR-V blobs[5] (per pipeline stage, ~0 for
-    // none), per blob u64 offset, u32 size, u32 0.
+    // none), per blob u64 offset, u32 size, u32 0; then u32 stage count, per stage u64 program
+    // hash, u8 pipeline stage, 3 bytes 0, u32 environment, u32 info blob (graphics only).
     struct {
         std::mutex mutex;
         std::ofstream file;
@@ -2212,6 +2275,7 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
         std::vector<std::pair<u64, u32>> blobs;
         std::vector<std::array<u32, 5>> record_infos;
         std::vector<std::array<u32, 5>> record_spirv;
+        std::unordered_set<u32> legacy_loads; ///< Info blobs with legacy attribute loads
         u64 spirv_bytes{};
     } kept;
     kept.record_infos.assign(total, {NoInfo, NoInfo, NoInfo, NoInfo, NoInfo});
@@ -2252,6 +2316,7 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
         std::array<std::vector<u8>, 5> compressed;
         std::array<u64, 5> info_hash{};
         std::array<u64, 5> spirv_hash{};
+        std::array<bool, 5> legacy_loads{};
         for (size_t stage = 0; stage < infos.size(); ++stage) {
             const Shader::Info* const info =
                 graphics ? graphics->StageInfo(stage) : (stage == 0 ? compute_info : nullptr);
@@ -2259,6 +2324,7 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
                 continue;
             }
             Shader::SerializeInfo(*info, infos[stage]);
+            legacy_loads[stage] = info->loads.Legacy();
             info_hash[stage] = Common::CityHash64(reinterpret_cast<const char*>(infos[stage].data()),
                                                   infos[stage].size());
             if (!spirv[stage].empty()) {
@@ -2276,6 +2342,9 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
             }
             kept.record_infos[index][stage] =
                 keep_blob(kept.infos_by_hash, info_hash[stage], infos[stage]);
+            if (legacy_loads[stage]) {
+                kept.legacy_loads.insert(kept.record_infos[index][stage]);
+            }
             if (!compressed[stage].empty()) {
                 const size_t before = kept.blobs.size();
                 kept.record_spirv[index][stage] =
@@ -2364,6 +2433,8 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
             // Keys leave the driver out (as the cache's records do), so a record made before a
             // driver update keys the pipeline as draws will.
             ClearDriverFields(key);
+            key.state.RekeyRecordedLogicOp(dynamic_features);
+            key.state.CanonicalizeLogicOp(dynamic_features);
             // Made for a device with other dynamic state. (Pipelines also in the disk cache are
             // built too: their shader infos are kept like the others'.)
             if (!KeyFitsDevice(key)) {
@@ -2500,6 +2571,56 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
             put(kept.file, size);
             put(kept.file, u32{0});
         }
+        // Each graphics stage's info by its program and recorded environment, for pipelines
+        // whose key was not predicted: a stage's translation depends on its own program and
+        // environment, except where legacy attribute loads are mapped to the previous stage's
+        // outputs (ConvertLegacyToGeneric), so those infos are left out. So is a program and
+        // environment whose infos differ between pipelines (an info that depends on the pipeline).
+        constexpr u32 Differs = ~0U - 1;
+        std::map<std::tuple<u64, u8, u32>, u32> stage_infos;
+        for (const size_t index : kept_records) {
+            const auto& record = records[index];
+            if (record.compute || record.graphics_key.unique_hashes[0] != 0) {
+                continue;
+            }
+            size_t position = 0;
+            for (size_t program = 1; program < Maxwell::MaxShaderProgram; ++program) {
+                const u64 program_hash = record.graphics_key.unique_hashes[program];
+                if (program_hash == 0) {
+                    continue;
+                }
+                if (position >= record.envs.size()) {
+                    break;
+                }
+                const u32 env = record.envs[position++];
+                const u8 stage = static_cast<u8>(program - 1);
+                const u32 info = kept.record_infos[index][stage];
+                if (info == NoInfo || kept.legacy_loads.contains(info)) {
+                    continue;
+                }
+                const auto [it, added] = stage_infos.try_emplace({program_hash, stage, env}, info);
+                if (!added && it->second != info) {
+                    it->second = Differs;
+                }
+            }
+        }
+        const auto differing = static_cast<size_t>(std::ranges::count_if(
+            stage_infos, [](const auto& entry) { return entry.second == Differs; }));
+        put(kept.file, static_cast<u32>(stage_infos.size() - differing));
+        for (const auto& [stage_key, info] : stage_infos) {
+            if (info == Differs) {
+                continue;
+            }
+            const auto& [program_hash, stage, env] = stage_key;
+            put(kept.file, program_hash);
+            put(kept.file, std::array<u8, 4>{stage});
+            put(kept.file, env);
+            put(kept.file, info);
+        }
+        LOG_INFO(Render_Vulkan,
+                 "Precompiled stage infos: {} by program and environment, {} left out (their "
+                 "infos differ between pipelines)",
+                 stage_infos.size() - differing, differing);
         kept.file.seekp(static_cast<std::streamoff>(index_offset_at));
         put(kept.file, index_offset);
         kept.file.close();
@@ -2510,9 +2631,15 @@ void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
                  kept_records.size(), kept.infos_by_hash.size(), kept.spirv_by_hash.size(),
                  kept.spirv_bytes >> 20, kept.offset >> 20);
     }
-    std::ofstream stamp_file(stamp_path, std::ios::binary | std::ios::trunc);
-    stamp_file << stamp;
-    stamp_file.close();
+    // Do not mark RADV preparation complete until the populated Vulkan cache is on disk.
+    const bool cache_saved = !radv_vulkan_cache ||
+                             SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename,
+                                                          vulkan_pipeline_cache, CACHE_VERSION);
+    if (cache_saved) {
+        std::ofstream stamp_file(stamp_path, std::ios::binary | std::ios::trunc);
+        stamp_file << stamp;
+        stamp_file.close();
+    }
     std::filesystem::remove(progress_path, error);
     LoadPrecompiledInfos(path, infos_path, stamp);
 }
@@ -2526,6 +2653,7 @@ bool PipelineCache::LoadPrecompiledInfos(const std::filesystem::path& precompile
     kept_infos_generation.fetch_add(1, std::memory_order_acq_rel);
     precompiled_records.clear();
     precompiled_compute_records.clear();
+    precompiled_stages.clear();
     try {
         std::ifstream file(infos, std::ios::binary);
         file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
@@ -2576,6 +2704,22 @@ bool PipelineCache::LoadPrecompiledInfos(const std::filesystem::path& precompile
             get(size);
             get(pad);
         }
+        u32 stage_count{};
+        get(stage_count);
+        precompiled_stages.reserve(stage_count);
+        for (u32 i = 0; i < stage_count; ++i) {
+            u64 program_hash{};
+            std::array<u8, 4> stage{};
+            PrecompiledStage entry;
+            get(program_hash);
+            get(stage);
+            get(entry.env);
+            get(entry.info);
+            entry.stage = stage[0];
+            if (entry.stage < 5 && entry.info < blob_count) {
+                precompiled_stages.emplace(program_hash, entry);
+            }
+        }
 
         std::ifstream prep(precompiled, std::ios::binary);
         prep.exceptions(std::ifstream::failbit | std::ifstream::badbit);
@@ -2585,42 +2729,68 @@ bool PipelineCache::LoadPrecompiledInfos(const std::filesystem::path& precompile
         precompiled_env_index.resize(header[1]);
         prep.read(reinterpret_cast<char*>(precompiled_env_index.data()),
                   precompiled_env_index.size() * sizeof(precompiled_env_index[0]));
-    } catch (const std::ios_base::failure&) {
+    } catch (const std::exception&) {
+        // Unreadable, or a damaged count (a reserve that cannot be met): prepared again.
         precompiled_records.clear();
         precompiled_compute_records.clear();
+        precompiled_stages.clear();
         return false;
     }
     precompiled_path = precompiled;
     precompiled_infos_path = infos;
-    LOG_INFO(Render_Vulkan, "Precompiled shader infos for {} graphics and {} compute pipelines",
-             precompiled_records.size(), precompiled_compute_records.size());
+    LOG_INFO(Render_Vulkan,
+             "Precompiled shader infos for {} graphics and {} compute pipelines, and {} graphics "
+             "stages by program",
+             precompiled_records.size(), precompiled_compute_records.size(),
+             precompiled_stages.size());
     return true;
 }
 
+/// A kept info blob, on the GPU thread; false when it is unreadable or needs layer emulation.
+static bool ReadKeptInfo(std::ifstream& file, std::pair<u64, u32> blob, Shader::Info& info) {
+    std::vector<u8> bytes(blob.second);
+    file.clear();
+    file.seekg(static_cast<std::streamoff>(blob.first));
+    file.read(reinterpret_cast<char*>(bytes.data()), blob.second);
+    std::span<const u8> in{bytes};
+    info = {};
+    return Shader::DeserializeInfo(in, info) && !info.requires_layer_emulation;
+}
+
 std::unique_ptr<GraphicsPipeline> PipelineCache::CreatePrecompiledGraphicsPipeline(
-    GraphicsEnvironments& environments) {
-    if (precompiled_records.empty() || !PrecompiledFastPath()) {
+    GraphicsEnvironments& environments, std::optional<PrecompiledRecord>* matched) {
+    if ((precompiled_records.empty() && precompiled_stages.empty()) || !PrecompiledFastPath()) {
         return nullptr;
     }
     const u64 hash = graphics_key.Hash();
-    const auto it = precompiled_records.find(hash);
-    if (it == precompiled_records.end() || precompiled_rejected.contains(hash)) {
+    // A vertex A program is merged into vertex B: not one of these.
+    if (precompiled_rejected.contains(hash) || graphics_key.unique_hashes[0] != 0) {
         return nullptr;
+    }
+    // EDEN_NX2_PRECOMPILED_PER_STAGE=1: every pipeline is looked up per stage, to test it.
+    static const bool per_stage_only = [] {
+        const char* value = std::getenv("EDEN_NX2_PRECOMPILED_PER_STAGE");
+        return value != nullptr && value[0] == '1';
+    }();
+    const auto it = precompiled_records.find(hash);
+    if (it == precompiled_records.end() || per_stage_only) {
+        std::string_view reason;
+        auto pipeline = CreatePerStageGraphicsPipeline(environments, matched, reason);
+        if (!pipeline && !reason.empty()) {
+            CountPrecompiledReason(reason);
+        }
+        return pipeline;
     }
     const PrecompiledRecord& record = it->second;
     const auto live = environments.Span();
-    // A vertex A program is merged into vertex B: not one of these.
-    if (graphics_key.unique_hashes[0] != 0 || live.size() != record.env_count) {
+    if (live.size() != record.env_count) {
         return nullptr;
     }
     auto recorded = std::make_shared<std::vector<FileEnvironment>>(record.env_count);
     std::array<Shader::Info, 5> infos{};
-    std::array<const Shader::Info*, 5> info_ptrs{};
+    std::array<bool, 5> present{};
     try {
-        if (!precompiled_file.is_open()) {
-            precompiled_file.open(precompiled_path, std::ios::binary);
-            precompiled_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-        }
+        OpenPrecompiledFiles();
         for (size_t i = 0; i < record.env_count; ++i) {
             precompiled_file.clear();
             const auto [offset, size] = precompiled_env_index.at(record.envs[i]);
@@ -2628,26 +2798,16 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreatePrecompiledGraphicsPipeli
             (*recorded)[i].Deserialize(precompiled_file,
                                        static_cast<std::streamoff>(offset + size));
         }
-        if (!precompiled_infos_file.is_open()) {
-            precompiled_infos_file.open(precompiled_infos_path, std::ios::binary);
-            precompiled_infos_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-        }
-        std::vector<u8> bytes;
         for (size_t stage = 0; stage < infos.size(); ++stage) {
             if (record.infos[stage] == NoInfo) {
                 continue;
             }
-            const auto [offset, size] = precompiled_info_blobs.at(record.infos[stage]);
-            bytes.resize(size);
-            precompiled_infos_file.clear();
-            precompiled_infos_file.seekg(static_cast<std::streamoff>(offset));
-            precompiled_infos_file.read(reinterpret_cast<char*>(bytes.data()), size);
-            std::span<const u8> in{bytes};
-            if (!Shader::DeserializeInfo(in, infos[stage]) || infos[stage].requires_layer_emulation) {
+            if (!ReadKeptInfo(precompiled_infos_file,
+                              precompiled_info_blobs.at(record.infos[stage]), infos[stage])) {
                 CountPrecompiledReason("infos unreadable or with layer emulation");
                 return nullptr;
             }
-            info_ptrs[stage] = &infos[stage];
+            present[stage] = true;
         }
     } catch (const std::exception&) {
         CountPrecompiledReason("files unreadable");
@@ -2655,31 +2815,30 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreatePrecompiledGraphicsPipeli
         precompiled_infos_file.close();
         return nullptr;
     }
-    // The pixel format traits the translation used: integer formats always (sampled textures),
-    // the others only with descriptors that use them.
-    u32 format_traits = FileEnvironment::FormatTraitInteger;
-    for (const auto* const info : info_ptrs) {
-        if (!info) {
+    // Each environment with the format traits its own stage's translation used.
+    size_t position = 0;
+    for (size_t program = 1; program < Maxwell::MaxShaderProgram; ++program) {
+        if (graphics_key.unique_hashes[program] == 0) {
             continue;
         }
-        if (std::ranges::any_of(info->image_descriptors,
-                                [](const auto& desc) { return desc.is_byte_addressed; })) {
-            format_traits |= FileEnvironment::FormatTraitByteAddressed;
-        }
-        if (!info->texture_buffer_descriptors.empty()) {
-            format_traits |= FileEnvironment::FormatTraitSnorm;
-        }
-    }
-    for (size_t i = 0; i < live.size(); ++i) {
-        const char* why = "";
-        if (!(*recorded)[i].AnswersHoldFor(*live[i], &why, format_traits)) {
-            CountPrecompiledReason(why);
+        if (position >= live.size()) {
             return nullptr;
         }
-    }
-    std::array<bool, 5> present{};
-    for (size_t stage = 0; stage < present.size(); ++stage) {
-        present[stage] = info_ptrs[stage] != nullptr;
+        const size_t stage = program - 1;
+        const u32 traits = present[stage] ? UsedFormatTraits(infos[stage])
+                                          : FileEnvironment::FormatTraitInteger;
+        const char* why = "";
+        if (!(*recorded)[position].AnswersHoldFor(*live[position], &why, traits)) {
+            // The program may be kept in other environments, from other pipelines. The reason
+            // counted is the predicted key's.
+            std::string_view per_stage_reason;
+            auto pipeline = CreatePerStageGraphicsPipeline(environments, matched, per_stage_reason);
+            if (!pipeline) {
+                CountPrecompiledReason(why);
+            }
+            return pipeline;
+        }
+        ++position;
     }
     // The worker builds the SPIR-V the preparation step kept: the translation of the recorded
     // environments by this build, which the check above found to give the game state's.
@@ -2688,22 +2847,130 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreatePrecompiledGraphicsPipeli
         const char* value = std::getenv("EDEN_NX2_PRECOMPILED_VERIFY");
         return value != nullptr && value[0] == '1';
     }();
-    bool kept_spirv = !verify;
-    std::array<std::pair<u64, u32>, 5> spirv_blobs{};
-    for (size_t stage = 0; stage < present.size() && kept_spirv; ++stage) {
-        if (!present[stage]) {
-            continue;
+    std::optional<std::array<std::pair<u64, u32>, 5>> spirv_blobs;
+    if (!verify) {
+        spirv_blobs.emplace();
+        for (size_t stage = 0; stage < present.size(); ++stage) {
+            if (!present[stage]) {
+                continue;
+            }
+            if (record.spirv[stage] == NoInfo ||
+                record.spirv[stage] >= precompiled_info_blobs.size()) {
+                spirv_blobs.reset();
+                break;
+            }
+            (*spirv_blobs)[stage] = precompiled_info_blobs[record.spirv[stage]];
         }
-        if (record.spirv[stage] == NoInfo || record.spirv[stage] >= precompiled_info_blobs.size()) {
-            kept_spirv = false;
-            break;
-        }
-        spirv_blobs[stage] = precompiled_info_blobs[record.spirv[stage]];
     }
-    if (kept_spirv) {
+    if (matched) {
+        *matched = record;
+    }
+    return MakePrecompiledGraphicsPipeline(std::move(recorded), infos, present, spirv_blobs);
+}
+
+void PipelineCache::OpenPrecompiledFiles() {
+    if (!precompiled_file.is_open()) {
+        precompiled_file.open(precompiled_path, std::ios::binary);
+        precompiled_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+    }
+    if (!precompiled_infos_file.is_open()) {
+        precompiled_infos_file.open(precompiled_infos_path, std::ios::binary);
+        precompiled_infos_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+    }
+}
+
+std::unique_ptr<GraphicsPipeline> PipelineCache::CreatePerStageGraphicsPipeline(
+    GraphicsEnvironments& environments, std::optional<PrecompiledRecord>* matched,
+    std::string_view& reason) {
+    if (precompiled_stages.empty()) {
+        return nullptr;
+    }
+    const auto live = environments.Span();
+    auto recorded = std::make_shared<std::vector<FileEnvironment>>(live.size());
+    std::array<Shader::Info, 5> infos{};
+    std::array<bool, 5> present{};
+    PrecompiledRecord found;
+    found.envs.fill(NoInfo);
+    found.infos.fill(NoInfo);
+    found.spirv.fill(NoInfo);
+    size_t position = 0;
+    try {
+        OpenPrecompiledFiles();
+        for (size_t program = 1; program < Maxwell::MaxShaderProgram; ++program) {
+            const u64 program_hash = graphics_key.unique_hashes[program];
+            if (program_hash == 0) {
+                continue;
+            }
+            if (position >= live.size()) {
+                return nullptr;
+            }
+            const size_t stage = program - 1;
+            // Each stage from the first of its program's recorded environments whose answers the
+            // game's state gives.
+            reason = "per stage: a program not kept";
+            size_t tried = 0;
+            const auto [first, last] = precompiled_stages.equal_range(program_hash);
+            for (auto entry = first; entry != last && tried < MaxStageCandidates; ++entry) {
+                const PrecompiledStage& candidate = entry->second;
+                if (candidate.stage != stage || candidate.env >= precompiled_env_index.size()) {
+                    continue;
+                }
+                ++tried;
+                if (!ReadKeptInfo(precompiled_infos_file,
+                                  precompiled_info_blobs[candidate.info], infos[stage])) {
+                    continue;
+                }
+                FileEnvironment env;
+                const auto [offset, size] = precompiled_env_index[candidate.env];
+                precompiled_file.clear();
+                precompiled_file.seekg(static_cast<std::streamoff>(offset));
+                env.Deserialize(precompiled_file, static_cast<std::streamoff>(offset + size));
+                const char* why = "";
+                if (!env.AnswersHoldFor(*live[position], &why, UsedFormatTraits(infos[stage]))) {
+                    reason = "per stage: a program's answers differ";
+                    continue;
+                }
+                (*recorded)[position] = std::move(env);
+                found.envs[position] = candidate.env;
+                found.infos[stage] = candidate.info;
+                present[stage] = true;
+                break;
+            }
+            if (!present[stage]) {
+                return nullptr;
+            }
+            ++position;
+        }
+    } catch (const std::exception&) {
+        reason = "files unreadable";
+        precompiled_file.close();
+        precompiled_infos_file.close();
+        return nullptr;
+    }
+    reason = {};
+    if (position != live.size()) {
+        return nullptr;
+    }
+    found.env_count = static_cast<u8>(position);
+    if (matched) {
+        *matched = found;
+    }
+    precompiled_per_stage.fetch_add(1, std::memory_order_relaxed);
+    return MakePrecompiledGraphicsPipeline(std::move(recorded), infos, present, std::nullopt);
+}
+
+std::unique_ptr<GraphicsPipeline> PipelineCache::MakePrecompiledGraphicsPipeline(
+    std::shared_ptr<std::vector<FileEnvironment>> recorded,
+    const std::array<Shader::Info, 5>& infos, const std::array<bool, 5>& present,
+    const std::optional<std::array<std::pair<u64, u32>, 5>>& spirv_blobs) {
+    std::array<const Shader::Info*, 5> info_ptrs{};
+    for (size_t stage = 0; stage < info_ptrs.size(); ++stage) {
+        info_ptrs[stage] = present[stage] ? &infos[stage] : nullptr;
+    }
+    if (spirv_blobs) {
         auto build_kept = [this, key = graphics_key, path = precompiled_infos_path,
                            generation = kept_infos_generation.load(std::memory_order_acquire),
-                           spirv_blobs, present] {
+                           spirv_blobs = *spirv_blobs, present] {
             std::array<vk::ShaderModule, Maxwell::MaxShaderStage> modules;
             for (size_t stage = 0; stage < modules.size(); ++stage) {
                 if (present[stage]) {
@@ -2794,27 +3061,14 @@ ComputePipelineCacheEntry PipelineCache::CreatePrecompiledComputePipeline(
         FileEnvironment recorded;
         Shader::Info info{};
         try {
-            if (!precompiled_file.is_open()) {
-                precompiled_file.open(precompiled_path, std::ios::binary);
-                precompiled_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-            }
+            OpenPrecompiledFiles();
             precompiled_file.clear();
             const auto [env_offset, env_size] = precompiled_env_index.at(record.envs[0]);
             precompiled_file.seekg(static_cast<std::streamoff>(env_offset));
             recorded.Deserialize(precompiled_file,
                                  static_cast<std::streamoff>(env_offset + env_size));
-            if (!precompiled_infos_file.is_open()) {
-                precompiled_infos_file.open(precompiled_infos_path, std::ios::binary);
-                precompiled_infos_file.exceptions(std::ifstream::failbit |
-                                                  std::ifstream::badbit);
-            }
-            const auto [offset, size] = precompiled_info_blobs.at(record.infos[0]);
-            std::vector<u8> bytes(size);
-            precompiled_infos_file.clear();
-            precompiled_infos_file.seekg(static_cast<std::streamoff>(offset));
-            precompiled_infos_file.read(reinterpret_cast<char*>(bytes.data()), size);
-            std::span<const u8> in{bytes};
-            if (!Shader::DeserializeInfo(in, info)) {
+            if (!ReadKeptInfo(precompiled_infos_file, precompiled_info_blobs.at(record.infos[0]),
+                              info)) {
                 if (!first_reason) {
                     first_reason = "infos unreadable or with layer emulation";
                 }
@@ -3527,7 +3781,10 @@ bool PipelineCache::TranslateGraphicsStages(ShaderPools& pools, const GraphicsPi
         bool eligible{mesh_index != 0 && (mesh_index == 1 || has_task) &&
                       layer_source_program == nullptr};
         const Shader::IR::Program& mesh{programs[mesh_index]};
-        eligible = eligible && mesh.mesh.topology == 4 && mesh.mesh.primitive_lines.empty() &&
+        // Points (0), lines (1) and triangles (4).
+        const u32 topology{mesh.mesh.topology};
+        eligible = eligible && (topology == 0 || topology == 1 || topology == 4) &&
+                   mesh.mesh.primitive_lines.empty() &&
                    !mesh.mesh.vertex_lines.empty() && mesh.mesh.max_vertices != 0 &&
                    mesh.mesh.max_primitives != 0;
         for (size_t index = 1; index < Maxwell::MaxShaderProgram && eligible; ++index) {
@@ -3593,6 +3850,7 @@ bool PipelineCache::TranslateGraphicsStages(ShaderPools& pools, const GraphicsPi
         }
         mesh_emulation->block_words = Shader::Backend::SPIRV::MeshEmulationBlockWords(mesh.mesh);
         mesh_emulation->max_primitives = mesh.mesh.max_primitives;
+        mesh_emulation->primitive_vertices = mesh.mesh.PrimitiveVertices();
         mesh_emulation->max_vertices = mesh.mesh.max_vertices;
         mesh_emulation->vertex_lines = static_cast<u32>(mesh.mesh.vertex_lines.size());
         for (u32 line = 0; line < mesh.mesh.vertex_lines.size(); ++line) {
@@ -3710,7 +3968,8 @@ bool PipelineCache::TranslateGraphicsStages(ShaderPools& pools, const GraphicsPi
                 mesh_emulation->vertex_spirv = Shader::Backend::SPIRV::EmitMeshEmulationVertex(
                     profile, program.mesh, mesh_emulation->output_binding,
                     mesh_emulation->has_task ? mesh_emulation->args_binding : ~0U,
-                    runtime_info.convert_depth_mode && !profile.support_native_ndc);
+                    runtime_info.convert_depth_mode && !profile.support_native_ndc,
+                    runtime_info.fixed_state_point_size.value_or(1.0f));
             }
         }
         ConvertLegacyToGeneric(program, runtime_info);
@@ -3920,10 +4179,12 @@ void ReportRuntimePipeline(const char* kind, std::chrono::steady_clock::time_poi
             precompiled_reasons.clear();
         }
         LOG_INFO(Render_Vulkan,
-                 "Precompiled pipelines in the last 10 s: {} created from kept infos ({:.1f} ms on "
-                 "the GPU thread), {} built from kept SPIR-V, {} translated on workers from their "
-                 "recorded environments, {} failed and replaced{}",
+                 "Precompiled pipelines in the last 10 s: {} created from kept infos ({} of them "
+                 "from stage infos, {:.1f} ms on the GPU thread), {} built from kept SPIR-V, {} "
+                 "translated on workers from their recorded environments, {} failed and "
+                 "replaced{}",
                  precompiled_created.exchange(0, std::memory_order::relaxed),
+                 precompiled_per_stage.exchange(0, std::memory_order::relaxed),
                  ms(std::chrono::nanoseconds{
                      precompiled_gpu_ns.exchange(0, std::memory_order::relaxed)}),
                  precompiled_from_spirv.exchange(0, std::memory_order::relaxed),
@@ -4019,7 +4280,8 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
     }
 
     const auto precompiled_begin = std::chrono::steady_clock::now();
-    auto pipeline{CreatePrecompiledGraphicsPipeline(environments)};
+    std::optional<PrecompiledRecord> precompiled_record;
+    auto pipeline{CreatePrecompiledGraphicsPipeline(environments, &precompiled_record)};
     if (pipeline) {
         precompiled_created.fetch_add(1, std::memory_order_relaxed);
         precompiled_gpu_ns.fetch_add(
@@ -4028,7 +4290,8 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
                 .count(),
             std::memory_order_relaxed);
         if (PrecompiledAudit()) {
-            AuditPrecompiled(environments.Span(), false, graphics_key.Hash());
+            AuditPrecompiled(environments.Span(), false, graphics_key.Hash(),
+                             precompiled_record ? &*precompiled_record : nullptr);
         }
         // As for a translated pipeline: the storage pointers the game's state answered as mapped
         // (it answered every question the recorded environments were asked), kept if the
@@ -4278,7 +4541,7 @@ ComputePipelineCacheEntry PipelineCache::CreateComputePipeline(
     return {.failure = exception.what()};
 }
 
-void PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& filename,
+bool PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& filename,
                                                  const vk::PipelineCache& pipeline_cache,
                                                  u32 cache_version) {
     // Written beside the cache and renamed over it: the emulator stopped mid-write left the cache
@@ -4289,7 +4552,7 @@ void PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& fi
     if (!file.is_open()) {
         LOG_ERROR(Common_Filesystem, "Failed to open Vulkan driver pipeline cache file {}",
                   Common::FS::PathToUTF8String(temporary));
-        return;
+        return false;
     }
     try {
         file.exceptions(std::ifstream::failbit);
@@ -4312,7 +4575,7 @@ void PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& fi
         file.close();
         std::error_code remove_error;
         std::filesystem::remove(temporary, remove_error);
-        return;
+        return false;
     }
     std::error_code error;
     std::filesystem::rename(temporary, filename, error);
@@ -4320,15 +4583,17 @@ void PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& fi
         LOG_ERROR(Common_Filesystem, "Failed to replace Vulkan driver pipeline cache file {}: {}",
                   Common::FS::PathToUTF8String(filename), error.message());
         std::filesystem::remove(temporary, error);
-        return;
+        return false;
     }
 
     LOG_INFO(Render_Vulkan, "Vulkan driver pipelines cached at: {}",
              Common::FS::PathToUTF8String(filename));
+    return true;
 }
 
 vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::path& filename,
                                                          u32 expected_cache_version) {
+    vulkan_pipeline_cache_loaded = false;
     const auto create_pipeline_cache = [this](size_t data_size, const void* data) {
         VkPipelineCacheCreateInfo pipeline_cache_ci = {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
@@ -4385,7 +4650,9 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
                  "Loaded Vulkan driver pipeline cache: {}", Common::FS::PathToUTF8String(filename));
 
         try {
-            return create_pipeline_cache(cache_size, cache_data.data());
+            auto cache = create_pipeline_cache(cache_size, cache_data.data());
+            vulkan_pipeline_cache_loaded = cache_size > sizeof(VkPipelineCacheHeaderVersionOne);
+            return cache;
         } catch (const vk::Exception& e) {
             // The blob came from another driver or driver version (e.g. switching between
             // MoltenVK and KosmicKrisp on macOS): the driver rejects it. Start empty instead of

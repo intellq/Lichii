@@ -135,6 +135,10 @@ struct ImageBase {
     /// set or an alias is added): SynchronizeAliases has nothing to do while it is not newer.
     u64 newest_alias_tick = 0;
     size_t lru_index = SIZE_MAX;
+    /// Render target relocation safety and allocation tracking.
+    u64 last_write_frame = ~u64{0};
+    u64 allocation_tick = 0;
+    u8 relocation_guard_noted = 0;
 
     std::array<u32, MAX_MIP_LEVELS> mip_level_offsets{};
 

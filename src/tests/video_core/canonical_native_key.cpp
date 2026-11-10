@@ -113,3 +113,46 @@ TEST_CASE("The generic read mask follows the header's input map", "[canonical_na
     CHECK(VideoCommon::GenericReadMask(sph) == ((1U << 0) | (1U << 1) | (1U << 31)));
     CHECK(VideoCommon::GenericReadMask(Shader::ProgramHeader{}) == 0);
 }
+
+TEST_CASE("Recorded logic operations are converted only when their disabled state is known",
+          "[canonical_native_key][logic_op]") {
+    Vulkan::DynamicFeatures features{};
+    auto recorded = MakeState();
+    recorded.extended_dynamic_state_2_logic_op.Assign(1);
+    recorded.dynamic_state.logic_op.Assign(7);
+    auto converted = recorded;
+    converted.RekeyRecordedLogicOp(features);
+    CHECK(converted.extended_dynamic_state_2_logic_op == 0);
+    CHECK(converted.dynamic_state.logic_op == 0);
+
+    auto enabled = recorded;
+    enabled.dynamic_state.logic_op_enable.Assign(1);
+    enabled.RekeyRecordedLogicOp(features);
+    CHECK(enabled.extended_dynamic_state_2_logic_op == 1);
+
+    auto dynamic_enable = recorded;
+    dynamic_enable.extended_dynamic_state_3_enables.Assign(1);
+    dynamic_enable.RekeyRecordedLogicOp(features);
+    CHECK(dynamic_enable.extended_dynamic_state_2_logic_op == 1);
+
+    features.has_extended_dynamic_state_2_logic_op = true;
+    recorded.RekeyRecordedLogicOp(features);
+    CHECK(recorded.extended_dynamic_state_2_logic_op == 1);
+}
+
+TEST_CASE("Unused static logic operations share a canonical key",
+          "[canonical_native_key][logic_op]") {
+    Vulkan::DynamicFeatures features{};
+    auto state = MakeState();
+    state.dynamic_state.logic_op.Assign(7);
+    state.CanonicalizeLogicOp(features);
+    CHECK(state.dynamic_state.logic_op == 0);
+    state.dynamic_state.logic_op.Assign(7);
+    state.dynamic_state.logic_op_enable.Assign(1);
+    state.CanonicalizeLogicOp(features);
+    CHECK(state.dynamic_state.logic_op == 7);
+    state.dynamic_state.logic_op_enable.Assign(0);
+    features.has_dynamic_state3_logic_op_enable = true;
+    state.CanonicalizeLogicOp(features);
+    CHECK(state.dynamic_state.logic_op == 7);
+}

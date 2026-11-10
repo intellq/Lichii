@@ -68,6 +68,10 @@ inline std::atomic<bool> g_enabled{true};
     return g_enabled.load(std::memory_order_relaxed);
 }
 
+/// Whether the host binds vertex stream strides as dynamic state (set by the renderer): a
+/// stride change then leaves the pipeline as it is.
+inline std::atomic<bool> g_dynamic_strides{false};
+
 /// Tests only.
 inline void SetEnabledForTest(bool on) {
     g_enabled.store(on, std::memory_order_relaxed);

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -11,6 +12,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "shader_recompiler/exception.h"
+#include "core/file_sys/nx2_shader_extract.h"
+#include "video_core/nx2_precompile.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/shader_environment.h"
 #include "video_core/shader_warm/shader_archives.h"
@@ -42,6 +45,29 @@ void WriteBytes(const std::filesystem::path& file, std::string_view bytes) {
 }
 
 } // Anonymous namespace
+
+TEST_CASE("Automatic shader preparation selects a recipe for the matching game and cache",
+          "[nx2_precompile]") {
+    TempDir dir;
+    std::array<u8, 24> precompiled{};
+    std::memcpy(precompiled.data(), "NX2PREP1", 8);
+    constexpr u64 Title = 0x0400486024DEC000ULL;
+    constexpr u32 Cache = 54;
+    const VideoCommon::Nx2Recipe::Header header{Title, 131072, Cache};
+    VideoCommon::Nx2Recipe::Report report{};
+    const FileSys::Nx2ShaderExtract::Result programs{};
+    const auto bytes = VideoCommon::Nx2Recipe::MakeRecipe(precompiled, programs, header, report, 1);
+    const auto path = dir.path / "zelda.nx2recipe";
+    std::ofstream file{path, std::ios::binary};
+    file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    file.close();
+    const auto found = VideoCommon::Nx2Precompile::FindRecipe(Title, dir.path, Cache);
+    REQUIRE(found);
+    CHECK(found->path == path);
+    CHECK(found->header.game_version == 131072);
+    CHECK_FALSE(VideoCommon::Nx2Precompile::FindRecipe(Title + 1, dir.path, Cache));
+    CHECK_FALSE(VideoCommon::Nx2Precompile::FindRecipe(Title, dir.path, Cache + 1));
+}
 
 TEST_CASE("ShaderPrecache: the setting decides whether the boot precaches", "[video_core]") {
     STATIC_REQUIRE_FALSE(ShaderWarm::PrecacheBeforeStart(PrecacheShaders::Off, false));

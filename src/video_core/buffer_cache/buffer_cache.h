@@ -9,6 +9,7 @@
 #include "video_core/buffer_cache/uniform_cache_history.h"
 
 #include <algorithm>
+#include <cstring>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -146,6 +147,9 @@ void BufferCache<P>::TickFrame() {
         }
         keep.kept = keep.streamed_binds = keep.verified = keep.mismatches = 0;
     }
+    if (!extent_probes.empty()) {
+        CheckExtentProbes();
+    }
     if (frame_tick % 600 == 0 && !uploaded_buffer_ranges.empty()) {
         for (const auto& [address, size] : uploaded_buffer_ranges) {
             device_memory.HintCold(address, size);
@@ -163,8 +167,13 @@ void BufferCache<P>::TickFrame() {
         }
         std::partial_sort(largest.begin(), largest.begin() + std::min<size_t>(6, largest.size()),
                           largest.end(), std::greater<>{});
-        LOG_INFO(HW_GPU, "Buffer cache: {} buffers {} MiB; largest {}", count, total >> 20,
-                 fmt::join(largest.begin(), largest.begin() + std::min<size_t>(6, largest.size()), ", "));
+        LOG_INFO(HW_GPU,
+                 "Buffer cache: {} buffers {} MiB; largest {}; compute write extents: {} checks "
+                 "held, {} programs marked in full, {} full marks for checks",
+                 count, total >> 20,
+                 fmt::join(largest.begin(), largest.begin() + std::min<size_t>(6, largest.size()), ", "),
+                 extent_probes_trusted, extent_probes_distrusted, extent_full_marks);
+        extent_full_marks = 0;
     }
 
     // Calculate hits and shots and move hit bits to the right
@@ -1834,6 +1843,9 @@ void BufferCache<P>::UnbindComputeStorageBuffers() {
     }
     channel_state->enabled_compute_storage_buffers = 0;
     channel_state->written_compute_storage_buffers = 0;
+    for (ExtentProbeRequest& request : extent_probe_requests) {
+        request.active = false;
+    }
     channel_state->native_compute_storage_buffers = 0;
     channel_state->image_compute_texture_buffers = 0;
 }
@@ -1917,7 +1929,33 @@ void BufferCache<P>::BindComputeStorageBuffer(size_t ssbo_index, u32 cbuf_index,
                 // The extent counts from the pointer, the binding from the pointer aligned down.
                 const GPUVAddr pointer = gpu_memory->Read<u64>(ssbo_addr);
                 const u64 pad = pointer >= binding.gpu_addr ? pointer - binding.gpu_addr : 0;
-                mark = std::min<u64>(binding.size, pad + *extent);
+                const u64 proven = std::min<u64>(binding.size, pad + *extent);
+                mark = proven;
+                // Not yet checked at these dims, or caught writing past it: mark in full (see
+                // ExtentTrust), and check this dispatch.
+                if (!IS_OPENGL && proven < binding.size) {
+                    const std::array<u32, 3> dims_grid =
+                        grid.value_or(std::array<u32, 3>{~0U, ~0U, ~0U});
+                    const ExtentTrust& trust = extent_trust[compute_shader_hash];
+                    bool bigger = false;
+                    for (size_t i = 0; i < 3; ++i) {
+                        bigger |= block[i] > trust.block[i] || dims_grid[i] > trust.grid[i];
+                    }
+                    if (trust.distrusted || bigger) {
+                        mark = binding.size;
+                        ++extent_full_marks;
+                        if (!trust.distrusted && !trust.probe_pending) {
+                            extent_probe_requests[ssbo_index] = ExtentProbeRequest{
+                                .active = true,
+                                .proven = proven,
+                                .pointer = pointer,
+                                .pad = pad,
+                                .block = block,
+                                .grid = dims_grid,
+                            };
+                        }
+                    }
+                }
             }
             break;
         }
@@ -2876,6 +2914,9 @@ void BufferCache<P>::BindHostComputeStorageBuffers() {
         const u64 write_mark_limit =
             native ? u64{channel_state->compute_storage_write_marks[index]} : ~u64{0};
         if (BindMultiRangeStorage(binding, is_written, compute_segments, write_mark_limit)) {
+            if (native && is_written) {
+                ProbeExtentTail(index, binding);
+            }
             return;
         }
         Buffer& buffer = slot_buffers[binding.buffer_id];
@@ -2886,6 +2927,11 @@ void BufferCache<P>::BindHostComputeStorageBuffers() {
         const u32 offset = buffer.Offset(binding.device_addr);
         buffer.MarkUsage(offset, size);
 
+        if (native && is_written) {
+            ProbeExtentTail(index, binding);
+        }
+
+        // The lower of EDEN_NX2_WRITTEN_SSBO_MARK_KIB's cap and the native write mark.
         const u32 mark =
             is_written ? static_cast<u32>(std::min<u64>(size, write_mark_limit)) : 0;
         if (mark != 0) {
@@ -2899,6 +2945,148 @@ void BufferCache<P>::BindHostComputeStorageBuffers() {
             runtime.BindStorageBuffer(buffer, offset, size, is_written);
         }
     });
+}
+
+template <class P>
+void BufferCache<P>::ProbeExtentTail(u32 index, const Binding& binding) {
+    // Write extent check (ExtentTrust): the tail past the proof, as it is right before this
+    // dispatch (after the bind's uploads). RecordComputeExtentProbes copies it again right after.
+    if constexpr (!IS_OPENGL) {
+        const ExtentProbeRequest& request = extent_probe_requests[index];
+        if (!request.active || request.proven >= binding.size) {
+            return;
+        }
+        BufferId buffer_id = binding.buffer_id;
+        DAddr tail = binding.device_addr + request.proven;
+        u64 room = binding.size - request.proven;
+        if (binding.segment_count >= 2) {
+            // A binding over several buffers: its segments cover it in order.
+            if (binding.segment_first > compute_segments.size() ||
+                binding.segment_count > compute_segments.size() - binding.segment_first) {
+                return;
+            }
+            u64 skip = request.proven;
+            bool found = false;
+            for (u32 i = 0; i < binding.segment_count; ++i) {
+                const MultiRangeSegment& segment = compute_segments[binding.segment_first + i];
+                if (skip < segment.size) {
+                    buffer_id = segment.buffer_id;
+                    tail = segment.device_addr + skip;
+                    room = segment.size - skip;
+                    found = true;
+                    break;
+                }
+                skip -= segment.size;
+            }
+            if (!found) {
+                return;
+            }
+        }
+        if (!slot_buffers.contains(buffer_id)) {
+            return;
+        }
+        Buffer& buffer = slot_buffers[buffer_id];
+        const u64 span = (std::min<u64>)(room, 2_MiB);
+        ExtentProbe probe{
+            .shader_hash = compute_shader_hash,
+            .buffer_id = buffer_id,
+            .device_addr = tail,
+            .binding_size = binding.size,
+            .request = request,
+            .span = span,
+            .before = runtime.DownloadStagingBuffer(span, true),
+        };
+        const BufferCopy copy{
+            .src_offset = buffer.Offset(tail),
+            .dst_offset = probe.before.offset,
+            .size = span,
+        };
+        runtime.CopyBuffer(probe.before.buffer, buffer, std::span{&copy, 1}, true);
+        extent_probes.push_back(std::move(probe));
+        extent_trust[compute_shader_hash].probe_pending = true;
+    }
+}
+
+template <class P>
+void BufferCache<P>::RecordComputeExtentProbes() {
+    if constexpr (IS_OPENGL) {
+        return;
+    } else {
+    for (ExtentProbe& probe : extent_probes) {
+        if (probe.after || !slot_buffers.contains(probe.buffer_id)) {
+            continue;
+        }
+        Buffer& buffer = slot_buffers[probe.buffer_id];
+        probe.after = runtime.DownloadStagingBuffer(probe.span, true);
+        const BufferCopy copy{
+            .src_offset = buffer.Offset(probe.device_addr),
+            .dst_offset = probe.after->offset,
+            .size = probe.span,
+        };
+        runtime.CopyBuffer(probe.after->buffer, buffer, std::span{&copy, 1}, true);
+        probe.tick = runtime.CurrentTick();
+    }
+    }
+}
+
+template <class P>
+void BufferCache<P>::CheckExtentProbes() {
+    if constexpr (IS_OPENGL) {
+        return;
+    } else {
+    std::erase_if(extent_probes, [this](ExtentProbe& probe) {
+        if (!probe.after) {
+            // The dispatch was dropped after its bind: the next one records the copy, and a
+            // difference from it can only distrust the program (the safe side).
+            return false;
+        }
+        if (!runtime.IsFree(probe.tick)) {
+            return false;
+        }
+        const u8* const before = probe.before.mapped_span.data();
+        const u8* const after = probe.after->mapped_span.data();
+        u64 differing = 0;
+        u64 first = ~u64{0};
+        u64 last = 0;
+        if (std::memcmp(before, after, probe.span) != 0) {
+            for (u64 i = 0; i < probe.span; ++i) {
+                if (before[i] != after[i]) {
+                    ++differing;
+                    first = (std::min)(first, i);
+                    last = i;
+                }
+            }
+        }
+        ExtentTrust& trust = extent_trust[probe.shader_hash];
+        trust.probe_pending = false;
+        const ExtentProbeRequest& request = probe.request;
+        if (differing != 0) {
+            if (!trust.distrusted) {
+                trust.distrusted = true;
+                ++extent_probes_distrusted;
+                LOG_WARNING(HW_GPU,
+                            "Compute write extent too small: shader {:016x} pointer {:#x} pad {} "
+                            "proven {} of {} bytes, block {}x{}x{} grid {}x{}x{}: {} bytes written "
+                            "past the proof (first +{}, last +{}); marked in full from now on",
+                            probe.shader_hash, request.pointer, request.pad, request.proven,
+                            probe.binding_size, request.block[0], request.block[1],
+                            request.block[2], request.grid[0], request.grid[1], request.grid[2],
+                            differing, first, last);
+            }
+        } else if (!trust.distrusted) {
+            // Trusted at these dims, and so at any dims within them. The componentwise maximum
+            // with dims checked before also counts as checked (a dispatch past both is rare).
+            for (size_t i = 0; i < 3; ++i) {
+                trust.block[i] = (std::max)(trust.block[i], request.block[i]);
+                trust.grid[i] = (std::max)(trust.grid[i], request.grid[i]);
+            }
+            ++extent_probes_trusted;
+        }
+        runtime.FreeDeferredStagingBuffer(probe.before);
+        runtime.FreeDeferredStagingBuffer(*probe.after);
+        return true;
+    });
+    }
 }
 
 template <class P>
