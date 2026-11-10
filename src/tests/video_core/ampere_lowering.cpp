@@ -138,6 +138,83 @@ TEST_CASE("Ampere calls find a return address set ahead of them", "[video_core][
     REQUIRE(lowered.error == "native call linkage mode");
 }
 
+constexpr std::array<Instruction, 7> ImadReturnLink{{
+    {{0x00097802, 0x30, 0x00000f00, 0}}, // MOV R9, return PC
+    {{0x01087224, 2, 0x078e0003, 0}},    // IMAD R8, R1, R2, R3 (not a pair write)
+    {{0x00007944, 0x10, 0x03c00000, 0}}, // CALL to instruction 4
+    EXIT,
+    {{0xff047224, 0xff, 0x078e0009, 0}}, // IMAD.MOV R4, RZ, RZ, R9
+    {{0x01087224, 2, 0x078e0003, 0}},
+    {{0x04007950, 0xffffff90, 0x03c3ffff, 0}}, // RET via R4
+}};
+
+TEST_CASE("Ampere nonadjacent calls track IMAD return-link copies",
+          "[video_core][ampere][imad_return_link]") {
+    for (const u32 destination : {8U, 10U, 255U}) {
+        auto code = ImadReturnLink;
+        code[1].words[0] = (code[1].words[0] & ~0xff0000U) | (destination << 16);
+        const auto lowered = LowerToMaxwell(code);
+        INFO(lowered.error);
+        CAPTURE(destination);
+        REQUIRE(lowered);
+        CHECK(lowered.source_size == sizeof(code));
+        const u64 copy = lowered.instructions.at(lowered.source_instruction_offsets.at(4));
+        CHECK((copy & 0xff) == 4);
+        CHECK(((copy >> 20) & 0xff) == 9);
+        CHECK(lowered.instructions.back() == 0xe32000000007000fULL);
+    }
+}
+
+TEST_CASE("Ampere IMAD return-link analysis rejects clobbers and invalid links",
+          "[video_core][ampere][imad_return_link]") {
+    for (const u32 site : {1U, 4U, 5U}) {
+        auto code = ImadReturnLink;
+        // Overwrite the original link before the call or in the callee, or its return alias.
+        const u32 destination = site == 5 ? 4U : 9U;
+        code[site] = {{0x01007224U | (destination << 16), 2, 0x078e0003, 0}};
+        const auto rejected = LowerToMaxwell(code);
+        CAPTURE(site);
+        CHECK_FALSE(rejected);
+        CHECK(rejected.error == "native call linkage mode");
+    }
+    const Instruction wide{{0x01087225, 2, 0x078e00ff, 0}}; // IMAD.WIDE R8:R9, R1, R2, RZ
+    REQUIRE(LowerToMaxwell(std::array{wide, EXIT}));
+    for (const u32 site : {1U, 5U}) {
+        auto code = ImadReturnLink;
+        code[site] = wide;
+        const auto rejected = LowerToMaxwell(code);
+        CHECK_FALSE(rejected);
+        CHECK(rejected.error == "native call linkage mode");
+    }
+    for (const bool predicated : {false, true}) {
+        auto code = ImadReturnLink;
+        if (predicated) {
+            code[4].words[0] &= ~0xf000U;
+        } else {
+            code[4].words[2] = 0x078e0008; // Copy R8, which does not hold the link.
+        }
+        const auto rejected = LowerToMaxwell(code);
+        CAPTURE(predicated);
+        CHECK_FALSE(rejected);
+        CHECK(rejected.error == "native call linkage mode");
+    }
+    auto wrong_base = ImadReturnLink;
+    wrong_base[6].words[1] = 0xffffffa0;
+    const auto rejected = LowerToMaxwell(wrong_base);
+    CHECK_FALSE(rejected);
+    CHECK(rejected.error == "native call linkage mode");
+}
+
+TEST_CASE("Ampere IMAD write tracking does not accept unsupported multiply modes",
+          "[video_core][ampere][imad_return_link]") {
+    auto code = ImadReturnLink;
+    code[1].words[2] |= 0x10000;
+    const auto rejected = LowerToMaxwell(code);
+    CHECK_FALSE(rejected);
+    CHECK(rejected.error == "native integer register multiply mode");
+    CHECK(rejected.error_offset == sizeof(Instruction));
+}
+
 TEST_CASE("Ampere programs go on past an EXIT that a branch jumps over", "[video_core][ampere]") {
     // A call, then a branch over an EXIT to more of the program, with another call there.
     const std::array<Instruction, 8> code{{
