@@ -4,6 +4,7 @@
 #if defined(__linux__) && !defined(__ANDROID__)
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <string>
 #include <thread>
 #include <SDL3/SDL.h>
@@ -71,6 +72,32 @@ TEST_CASE("Any input receives SDL virtual controller hotplug", "[input][any][sdl
     REQUIRE(mapping.contains(Settings::NativeButton::A));
     const int button = mapping.at(Settings::NativeButton::A).Get("button", -1);
     REQUIRE(button >= 0);
+    const auto sticks = subsystem.GetAnalogMappingForDevice(*device);
+    REQUIRE(sticks.contains(Settings::NativeAnalog::LStick));
+    const int axis = sticks.at(Settings::NativeAnalog::LStick).Get("axis_x", -1);
+    REQUIRE(axis >= 0);
+    Common::ParamPackage stick_params;
+    stick_params.Set("engine", "any_input");
+    stick_params.Set("kind", "stick");
+    stick_params.Set("index", static_cast<int>(Settings::NativeAnalog::LStick));
+    stick_params.Set("base", InputCommon::GenerateAnalogParamFromKeys(101, 102, 103, 104, 0, 0.5f));
+    auto stick_input = Common::Input::CreateInputDevice(stick_params);
+    float stick_x{};
+    stick_input->SetCallback({.on_change = [&](const Common::Input::CallbackStatus& status) {
+        stick_x = status.stick_status.x.raw_value;
+    }});
+    std::this_thread::sleep_for(std::chrono::milliseconds{260});
+    subsystem.PumpEvents();
+    REQUIRE(SDL_SetJoystickVirtualAxis(cleanup.joystick, axis, 20000));
+    subsystem.PumpEvents();
+    REQUIRE(std::abs(stick_x) > 0.4f);
+    subsystem.GetKeyboard()->PressKey(104);
+    REQUIRE(SDL_SetJoystickVirtualAxis(cleanup.joystick, axis, 0));
+    subsystem.PumpEvents();
+    REQUIRE(stick_x > 0.4f);
+    subsystem.GetKeyboard()->ReleaseKey(104);
+    subsystem.PumpEvents();
+    REQUIRE(std::abs(stick_x) < 0.01f);
     const int custom_button = (button + 1) % 20;
     auto custom_mapping = mapping.at(Settings::NativeButton::A);
     custom_mapping.Set("button", custom_button);
@@ -142,6 +169,7 @@ TEST_CASE("Any input receives SDL virtual controller hotplug", "[input][any][sdl
     subsystem.PumpEvents();
     REQUIRE(pressed);
     REQUIRE(custom_pressed);
+    stick_input.reset();
     custom_input.reset();
     input.reset();
 }
