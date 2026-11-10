@@ -372,9 +372,10 @@ private:
                     calls.push_back([fn, args...]() { fn(args...); });
                 }
             }
-        }
-        {
-            std::scoped_lock lk{notify_mutex};
+            // Raised while `mutex` is held: RemoveListener erases its owner under the same
+            // mutex and then waits for the count, so it can never observe zero between the
+            // snapshot and this increment.
+            std::scoped_lock notify_lk{notify_mutex};
             active_notifications += calls.size();
         }
         for (auto& call : calls) {
