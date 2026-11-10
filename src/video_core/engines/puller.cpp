@@ -72,6 +72,7 @@ void DrainBack() {
 // The fence manager records into the scheduler and downloads the CPU's writes over GPU data:
 // the back's state, which a drained back still uses from its idle hook (it submits).
 void ReleaseFences(DmaPusher& dma_pusher) {
+    const Common::Nx2Hitch::Scope timed{Common::Nx2Hitch::Cause::FullDrain};
     VideoCommon::GpuSplit::Get().Run(
         [rasterizer = dma_pusher.rasterizer] { rasterizer->ReleaseFences(); },
         VideoCommon::DrainSite::FenceRelease);

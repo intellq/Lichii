@@ -9,6 +9,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
+#elif defined(__linux__)
+#include <sys/resource.h>
 #endif
 
 namespace Common::Nx2Hitch {
@@ -35,27 +37,32 @@ Snapshot Take() {
     if (K32GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters))) {
         snapshot.page_faults = counters.PageFaultCount;
     }
+#elif defined(__linux__)
+    struct rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+        snapshot.page_faults = static_cast<u64>(usage.ru_minflt) + static_cast<u64>(usage.ru_majflt);
+    }
 #endif
     return snapshot;
 }
 
+} // Anonymous namespace
+
 bool Enabled() {
     static const bool enabled = [] {
         const char* const value = std::getenv("EDEN_NX2_HITCH_LOG");
-        return value == nullptr || value[0] != '0';
+        return value != nullptr && value[0] == '1';
     }();
     return enabled;
 }
 
-} // Anonymous namespace
-
 void OnPresent(long long gap_us) {
-    static Snapshot last = Take();
-    static u64 window_start_ns = NowNs();
-    static int lines_in_window = 0;
     if (!Enabled()) {
         return;
     }
+    static Snapshot last = Take();
+    static u64 window_start_ns = NowNs();
+    static int lines_in_window = 0;
     const Snapshot now = Take();
     if (gap_us >= ThresholdUs) {
         // At most 20 lines a minute (a loading screen can stall many presents in a row).
@@ -77,14 +84,13 @@ void OnPresent(long long gap_us) {
             const double trim_running_ms =
                 trim_since != 0 ? static_cast<double>(now_ns - trim_since) / 1e6 : 0.0;
             LOG_INFO(Render, // with the frame lines it lines up against
-                     "Hitch: {:.1f} ms between presents; in it: full drains {:.1f} ms ({}), "
-                     "read-backs {:.1f} ms ({}), save data {:.1f} ms ({}), memory walks {:.1f} ms "
-                     "({}), zero-page passes ended {:.1f} ms ({}), one running for {:.0f} ms, "
+                     "Hitch: {:.1f} ms between presents; in it: fence releases {:.1f} ms ({}), "
+                     "read-backs {:.1f} ms ({}), save data {:.1f} ms ({}), "
+                     "zero-page passes ended {:.1f} ms ({}), one running for {:.0f} ms, "
                      "page faults {}",
                      static_cast<double>(gap_us) / 1e3, ms(Cause::FullDrain),
                      n(Cause::FullDrain), ms(Cause::ReadBack), n(Cause::ReadBack),
-                     ms(Cause::SaveData), n(Cause::SaveData), ms(Cause::MemorySample),
-                     n(Cause::MemorySample), ms(Cause::ZeroTrim), n(Cause::ZeroTrim),
+                     ms(Cause::SaveData), n(Cause::SaveData), ms(Cause::ZeroTrim), n(Cause::ZeroTrim),
                      trim_running_ms, now.page_faults - last.page_faults);
         }
     }
