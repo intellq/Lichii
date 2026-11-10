@@ -85,14 +85,31 @@ void DeviceMemory::TrimZeroPages(std::stop_token stop) {
                             std::chrono::steady_clock::now() - start)
                             .count();
         if (trimmed < Busy) {
+            // A slow pass is logged too: its working set query and page reads take ~1 s at
+            // ~7 GB resident, and freezes need lining up against it (fable52_answer_1 M8c).
+            if (ms >= 100 && Common::Nx2Hitch::Enabled()) {
+                const auto phases = Common::HostMemory::LastZeroTrimPhases();
+                LOG_INFO(HW_Memory,
+                         "Zero-page pass: {} MiB trimmed of {} MiB resident in {} ms (next in {} s); "
+                         "working set query {} ms, page reads {} ms, {} unlock runs {} ms "
+                         "(longest {:.1f})",
+                         trimmed >> 20, resident >> 20, ms,
+                         (std::min)(interval * 2, max_interval).count(),
+                         phases.query_us / 1000, phases.scan_us / 1000, phases.unlock_runs,
+                         phases.unlock_us / 1000, static_cast<double>(phases.longest_unlock_us) / 1e3);
+            }
             interval = (std::min)(interval * 2, max_interval);
             continue;
         }
         interval = 5s;
+        const auto phases = Common::HostMemory::LastZeroTrimPhases();
         LOG_INFO(HW_Memory,
                  "Trimmed {} MiB of all-zero guest pages out of {} MiB resident in {} ms; the kernel "
-                 "zero-filled {} MiB so far",
-                 trimmed >> 20, resident >> 20, ms, Common::HostMemory::ZeroFilledBytes() >> 20);
+                 "zero-filled {} MiB so far; working set query {} ms, page reads {} ms, {} unlock "
+                 "runs {} ms (longest {:.1f})",
+                 trimmed >> 20, resident >> 20, ms, Common::HostMemory::ZeroFilledBytes() >> 20,
+                 phases.query_us / 1000, phases.scan_us / 1000, phases.unlock_runs,
+                 phases.unlock_us / 1000, static_cast<double>(phases.longest_unlock_us) / 1e3);
     }
 }
 #endif
