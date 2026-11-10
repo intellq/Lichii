@@ -4,6 +4,7 @@
 #ifdef _WIN32
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <condition_variable>
 #include <mutex>
 
@@ -27,7 +28,10 @@ DeviceMemory::DeviceMemory()
     : buffer{Kernel::Board::Nintendo::Nx::KSystemControl::Init::GetIntendedMemorySize(),
              VirtualReserveSize} {
 #ifdef _WIN32
-    zero_trim_thread = std::jthread{[this](std::stop_token stop) { TrimZeroPages(stop); }};
+    // Opt out of the Windows zero-page pass for performance comparisons.
+    if (const char* value = std::getenv("EDEN_NX2_ZERO_TRIM"); value == nullptr || value[0] != '0') {
+        zero_trim_thread = std::jthread{[this](std::stop_token stop) { TrimZeroPages(stop); }};
+    }
 #endif
 }
 
