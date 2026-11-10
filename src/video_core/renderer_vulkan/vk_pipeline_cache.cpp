@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -1863,9 +1864,24 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
     const size_t graphics_jobs = jobs.size();
     const std::filesystem::path warm_file = ShaderWarm::ComputeWarmPath(title_id);
     const std::string path = Common::FS::PathToUTF8String(warm_file);
+    // Based on Lichii PR #1174: warm shaders again when their emitted variant changes.
+    const auto& resolution = Settings::values.resolution_info;
+    const std::array<u64, 9> variant_inputs{
+        VideoCommon::ShaderCacheV2::PrecompiledShaderStamp,
+        resolution.active ? 1ULL : 0ULL,
+        resolution.up_scale,
+        resolution.down_shift,
+        Settings::values.disable_shader_loop_safety_checks.GetValue() ? 1ULL : 0ULL,
+        Settings::values.fix_bloom_effects.GetValue() ? 1ULL : 0ULL,
+        Settings::values.renderer_debug.GetValue() ? 1ULL : 0ULL,
+        host_info.support_handle_table_arrays ? 1ULL : 0ULL,
+        Shader::Optimization::HandleTableSize(),
+    };
+    const u64 variant = Common::CityHash64(reinterpret_cast<const char*>(variant_inputs.data()),
+                                           sizeof(variant_inputs));
     const auto stamp = [&](u64 entries) {
         return ShaderWarm::CurrentWarmStamp(warm_file, entries, device.GetDriverVersion(),
-                                            device.GetDeviceID(), CACHE_VERSION);
+                                            device.GetDeviceID(), CACHE_VERSION, variant);
     };
     // Compute programs of the precache file, unless a matching marker says they were built.
     size_t file_entries = 0;
