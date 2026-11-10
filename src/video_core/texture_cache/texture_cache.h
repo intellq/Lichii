@@ -665,7 +665,13 @@ void TextureCache<P>::TickFrame() {
                  "for buffer-written pages; {} MiB of pages marked stale",
                  tc_stale_skips, tc_stale_skip_bytes >> 20, tc_stale_gpu_written,
                  (stale_pages.Count() << StalePages::PAGE_BITS) >> 20);
+        LOG_INFO(HW_GPU,
+                 "Texture cache last 600 frames: {} new render targets ({} uploaded, {} fresh), "
+                 "{} uploads from guest memory",
+                 render_targets_created, render_targets_uploaded, fresh_render_targets,
+                 images_uploaded);
         tc_stale_skips = tc_stale_skip_bytes = tc_stale_gpu_written = 0;
+        fresh_render_targets = render_targets_created = render_targets_uploaded = 0;
         images_uploaded = uploaded_bytes = largest_upload = layer_uploads = 0;
         astc_opaque_images = astc_alpha_images = 0;
         std::vector<std::pair<u32, u64>> shapes;
@@ -3751,6 +3757,34 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
             return false;
         }
     };
+    // A new render target that nothing the cache holds overlaps needs no upload from guest
+    // memory either: what the guest holds there is stale, and the passes draw such targets whole.
+    // Ocarina of Time recreates its post-processing targets at new addresses about every frame
+    // while the camera moves (~10 a frame, ~0.5 GB/s uploaded). Pages the buffer cache wrote on
+    // the GPU since the guest last wrote them do hold data the upload would bring: those keep
+    // it. EDEN_NX2_RT_FRESH: 1 skips only targets nothing overlaps, 2 also those overlapping
+    // older images (their data is copied in below, or lost to a bad overlap either way: the
+    // upload only brings stale memory). Unset: 2 on Switch 2 titles, 0 otherwise.
+    const auto fresh_render_target = [&] {
+        static const int forced = [] {
+            const char* value = std::getenv("EDEN_NX2_RT_FRESH");
+            return value != nullptr ? static_cast<int>(std::strtoul(value, nullptr, 10)) : -1;
+        }();
+        const bool nx2 = Tegra::g_nx2_ampere.load(std::memory_order_relaxed);
+        const u32 mode = forced >= 0 ? static_cast<u32>(forced) : (nx2 ? 2U : 0U);
+        if (mode == 0 || !creating_render_target ||
+            new_info.type != ImageType::e2D || new_info.resources.levels != 1 ||
+            new_info.resources.layers != 1 || new_info.num_samples != 1) {
+            return false;
+        }
+        if (mode < 2 && (!join_copies_to_do.empty() || !join_bad_overlap_ids.empty())) {
+            return false;
+        }
+        return !Tegra::Nx2MayBeGpuWritten(new_image.cpu_addr, new_image.guest_size_bytes);
+    };
+    if (creating_render_target) {
+        ++render_targets_created;
+    }
     std::ranges::sort(join_copies_to_do, [this](const JoinCopy& lhs, const JoinCopy& rhs) {
         const ImageBase& lhs_image = slot_images[lhs.id];
         const ImageBase& rhs_image = slot_images[rhs.id];
@@ -3857,7 +3891,18 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
             TrackImage(new_image, new_image_id);
         }
         runtime.TransitionImageLayout(new_image);
+    } else if (fresh_render_target()) {
+        // What RefreshContents does, without the upload.
+        new_image.flags &= ~ImageFlagBits::CpuModified;
+        if (False(new_image.flags & ImageFlagBits::Tracked)) {
+            TrackImage(new_image, new_image_id);
+        }
+        runtime.TransitionImageLayout(new_image);
+        ++fresh_render_targets;
     } else {
+        if (creating_render_target && True(new_image.flags & ImageFlagBits::CpuModified)) {
+            ++render_targets_uploaded;
+        }
         // TODO: Only upload what we need
         RefreshContents(new_image, new_image_id);
     }
@@ -4118,11 +4163,13 @@ ImageViewId TextureCache<P>::FindRenderTargetView(const ImageInfo& info, GPUVAdd
     }
     ImageId image_id{};
     bool delete_state = has_deleted_images;
+    creating_render_target = true;
     do {
         has_deleted_images = false;
         image_id = FindOrInsertImage(info, gpu_addr);
         delete_state |= has_deleted_images;
     } while (has_deleted_images);
+    creating_render_target = false;
     has_deleted_images = delete_state;
     if (!image_id) {
         return NULL_IMAGE_VIEW_ID;
