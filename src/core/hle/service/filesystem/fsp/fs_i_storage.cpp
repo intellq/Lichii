@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <thread>
 
 #include "common/settings.h"
@@ -37,11 +38,13 @@ Result IStorage::Read(
     R_UNLESS(length >= 0, FileSys::ResultInvalidSize);
     R_UNLESS(offset >= 0, FileSys::ResultInvalidOffset);
 
-    // The 40 MB/s throttle emulates a Switch 1 card (Eden cbd4cf2d8c, Mario Strikers' intro).
-    // Switch 2 storage is many times faster, and a Switch 2 title that streams a movie with
-    // hundreds of reads a second (Ocarina of Time's opening: 300-460) sleeps most of each second
-    // on the thread that also hands decoder images back, so its video falls seconds behind.
-    if (!Settings::CurrentProgramIsSwitch2()) {
+    // Switch 2 does not use the Switch 1 card's 40 MB/s pacing. The optional override also
+    // disables pacing for Switch 1 when explicitly requested.
+    static const bool throttle_enabled = [] {
+        const char* const value = std::getenv("EDEN_NX2_READ_THROTTLE");
+        return value == nullptr || value[0] != '0';
+    }();
+    if (throttle_enabled && !Settings::CurrentProgramIsSwitch2()) {
         const auto now = std::chrono::steady_clock::now();
         if (now < next_read_tick) {
             std::this_thread::sleep_for(next_read_tick - now);
