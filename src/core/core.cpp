@@ -493,7 +493,12 @@ struct System::Impl {
         // Before the cores start: they read it from their JIT without a lock. Not with a single
         // core (no idle core to compile on) or the debugger, nor where any core's backend lacks
         // it (NCE, 32-bit processes, dynarmic's non-x64 backends).
-        if (kernel.IsMulticore() && !system.DebuggerEnabled()) {
+        const char* const jit_warmup_option = std::getenv("EDEN_NX2_JIT_WARMUP");
+        const bool jit_warmup_enabled = jit_warmup_option == nullptr || jit_warmup_option[0] != '0';
+        if (!jit_warmup_enabled) {
+            LOG_INFO(Core_ARM, "JIT warm-up disabled by EDEN_NX2_JIT_WARMUP");
+        }
+        if (jit_warmup_enabled && kernel.IsMulticore() && !system.DebuggerEnabled()) {
             Kernel::KProcess* const kprocess = process->GetHandle();
             bool supported = true;
             for (size_t core = 0; core < Core::Hardware::NUM_CPU_CORES; ++core) {
