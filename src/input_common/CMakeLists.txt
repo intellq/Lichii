@@ -5,6 +5,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 add_library(input_common STATIC
+    any_input.cpp
+    any_input.h
     drivers/camera.cpp
     drivers/camera.h
     drivers/keyboard.cpp

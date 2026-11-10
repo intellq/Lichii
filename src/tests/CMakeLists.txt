@@ -58,6 +58,8 @@ add_executable(tests
     core/vfs_vector.cpp
     core/file_sys_parsers.cpp
     input_common/calibration_lifetime.cpp
+    input_common/any_input.cpp
+    input_common/any_input_sdl.cpp
     video_core/ampere_logged_numeric.cpp
     video_core/ampere_logged_textures.cpp
     video_core/native_texture_header_index.cpp
