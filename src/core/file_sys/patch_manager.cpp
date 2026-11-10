@@ -202,7 +202,7 @@ static_assert(OotHighRefreshCode::CallOffset == 0x6E6CC4 &&
 constexpr std::array HIGH_REFRESH_RECORDS{
     BuiltinPatchRecord{0x6E6CC4, HIGH_REFRESH_CALL, DYNAMIC_FPS_ORIGINAL},
     BuiltinPatchRecord{0x3C46200, FPS_UNLOCK_ROUTINE, {}, true},
-    BuiltinPatchRecord{HIGH_REFRESH_ROUTINE_OFFSET, HIGH_REFRESH_ROUTINE, {}, true},
+    BuiltinPatchRecord{HIGH_REFRESH_ROUTINE_OFFSET, HIGH_REFRESH_CAVE, {}, true},
     BuiltinPatchRecord{0x475F8, WATER_STEPS_CALL, WATER_STEPS_ORIGINAL},
     BuiltinPatchRecord{0x4760C, WATER_MUL_NOP, WATER_MUL_ORIGINAL},
     BuiltinPatchRecord{0x3C46400, WATER_STEPS_ROUTINE, {}, true},

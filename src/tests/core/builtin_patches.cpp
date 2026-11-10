@@ -584,10 +584,10 @@ TEST_CASE("High refresh rate built-in replaces Dark's routine only while its set
 
     SECTION("On, with the extended cave in use: FPS Unlock remains active") {
         Settings::values.oot_high_refresh.SetValue(true);
-        nso[Routine + 0x80] = 1;
+        nso[Routine + 0x100] = 1;
         const auto patched = context.Manager().PatchNSO(nso, "main");
         REQUIRE(word_at(patched, BaseRoutine + 0x7C) == 0x40C00000);
-        REQUIRE(word_at(patched, Routine + 0x80) == 1);
+        REQUIRE(word_at(patched, Routine + 0x100) == 1);
         REQUIRE_FALSE(FileSys::OotHighRefreshScaleOffset(std::span{patched}.subspan(Code)));
     }
 
