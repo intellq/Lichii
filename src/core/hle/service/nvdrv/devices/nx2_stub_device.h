@@ -12,6 +12,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -172,20 +173,51 @@ public:
     void AddListener(const void* owner, Listener listener, UnmapListener unmap_listener,
                      ReleaseListener release_listener = {}, SparseListener sparse_listener = {},
                      BackListener back_listener = {}, TileListener tile_listener = {}) {
-        std::scoped_lock lk{mutex};
-        for (const auto& m : mappings) {
-            listener(m.gpu_address, m.cpu_address, m.size);
+        // The replay of existing mappings runs outside `mutex`, like every other listener call:
+        // the listener (an address space's Nx2Map) queues blocking GPU-thread work, and the GPU
+        // thread's back reaches the registry from BackSparseWrite — under the mutex the replay
+        // would close the same cycle MapAt used to.
+        std::vector<std::tuple<u64, u64, u64>> existing_mappings;
+        std::vector<std::pair<u64, u64>> existing_sparse;
+        Listener replay_map;
+        SparseListener replay_sparse;
+        {
+            std::scoped_lock lk{mutex};
+            listeners.insert_or_assign(owner, Listeners{std::move(listener), std::move(unmap_listener),
+                                                        std::move(release_listener),
+                                                        std::move(sparse_listener),
+                                                        std::move(back_listener),
+                                                        std::move(tile_listener)});
+            // Registering first and replaying second keeps the pair atomic against RemoveListener
+            // (which erases under the same mutex and waits for in-flight calls); the new owner is
+            // registered here so it also protects it while its replay runs.
+            const auto& registered = listeners.at(owner);
+            replay_map = registered.map;
+            replay_sparse = registered.sparse;
+            for (const auto& m : mappings) {
+                existing_mappings.emplace_back(m.gpu_address, m.cpu_address, m.size);
+            }
+            if (replay_sparse) {
+                for (const auto& [gpu_address, size] : sparse_regions) {
+                    existing_sparse.emplace_back(gpu_address, size);
+                }
+            }
+            std::scoped_lock notify_lk{notify_mutex};
+            active_notifications += existing_mappings.size() + existing_sparse.size();
         }
-        if (sparse_listener) {
-            for (const auto& [gpu_address, size] : sparse_regions) {
-                sparse_listener(gpu_address, size, true);
+        for (const auto& [gpu_address, cpu_address, size] : existing_mappings) {
+            replay_map(gpu_address, cpu_address, size);
+        }
+        if (replay_sparse) {
+            for (const auto& [gpu_address, size] : existing_sparse) {
+                replay_sparse(gpu_address, size, true);
             }
         }
-        listeners.insert_or_assign(owner, Listeners{std::move(listener), std::move(unmap_listener),
-                                                    std::move(release_listener),
-                                                    std::move(sparse_listener),
-                                                    std::move(back_listener),
-                                                    std::move(tile_listener)});
+        {
+            std::scoped_lock lk{notify_mutex};
+            active_notifications -= existing_mappings.size() + existing_sparse.size();
+        }
+        notify_cv.notify_all();
     }
 
     void RemoveListener(const void* owner) {
