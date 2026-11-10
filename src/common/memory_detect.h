@@ -4,6 +4,7 @@
 #pragma once
 
 #include <optional>
+#include <string_view>
 
 #include "common/common_types.h"
 
@@ -25,8 +26,10 @@ struct ProcessMemoryUsage {
     u64 commit{};              ///< Private commit (Windows PrivateUsage, Linux VmData).
     u64 working_set{};         ///< Resident memory.
     u64 private_working_set{}; ///< Resident memory not shared with other mappings.
-    u64 system_commit{};       ///< Commit charge of the whole system (Windows).
-    u64 system_commit_limit{}; ///< Commit limit of the whole system (Windows).
+    /// Commit charge of the whole system (Windows CommitTotal, Linux Committed_AS).
+    u64 system_commit{};
+    /// Commit limit of the whole system (CommitLimit on both).
+    u64 system_commit_limit{};
 };
 
 [[nodiscard]] ProcessMemoryUsage GetProcessMemoryUsage();
@@ -34,5 +37,9 @@ struct ProcessMemoryUsage {
 /// Commit the system can still hand out, in bytes: its commit limit (RAM plus the page files)
 /// minus what is committed. No value where the host reports no such limit (anything but Windows).
 [[nodiscard]] std::optional<u64> GetSystemCommitRoom();
+
+/// The value of a "Key:   1234 kB" line of /proc/self/status or /proc/meminfo, in bytes. `key`
+/// includes the colon and must start a line. 0 when the field is missing or malformed.
+[[nodiscard]] u64 ProcKilobytesField(std::string_view text, std::string_view key);
 
 } // namespace Common

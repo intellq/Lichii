@@ -18,12 +18,13 @@
 #endif
 #endif
 
-#ifdef __linux__
-#include <algorithm>
-#include <cstdlib>
-#include <fstream>
-#include <string>
+#include <charconv>
 #include <string_view>
+
+#ifdef __linux__
+#include <fstream>
+#include <iterator>
+#include <string>
 #endif
 
 #include "common/memory_detect.h"
@@ -97,18 +98,18 @@ ProcessMemoryUsage GetProcessMemoryUsage() {
         usage.system_commit_limit = u64{performance.CommitLimit} * performance.PageSize;
     }
 #elif defined(__linux__)
-    std::ifstream status{"/proc/self/status"};
-    for (std::string line; std::getline(status, line);) {
-        const auto field = [&line](std::string_view key) -> u64 {
-            if (!line.starts_with(key)) {
-                return 0;
-            }
-            return std::strtoull(line.c_str() + key.size(), nullptr, 10) << 10;
-        };
-        usage.commit = (std::max)(usage.commit, field("VmData:"));
-        usage.working_set = (std::max)(usage.working_set, field("VmRSS:"));
-        usage.private_working_set = (std::max)(usage.private_working_set, field("RssAnon:"));
-    }
+    const auto read = [](const char* path) {
+        std::ifstream file{path};
+        return std::string{std::istreambuf_iterator<char>{file}, {}};
+    };
+    const std::string status = read("/proc/self/status");
+    usage.commit = ProcKilobytesField(status, "VmData:");
+    usage.working_set = ProcKilobytesField(status, "VmRSS:");
+    usage.private_working_set = ProcKilobytesField(status, "RssAnon:");
+    // The memory trace printed "system commit 0 of 0 MiB" on Linux.
+    const std::string meminfo = read("/proc/meminfo");
+    usage.system_commit = ProcKilobytesField(meminfo, "Committed_AS:");
+    usage.system_commit_limit = ProcKilobytesField(meminfo, "CommitLimit:");
 #endif
     return usage;
 }
@@ -124,6 +125,32 @@ std::optional<u64> GetSystemCommitRoom() {
     }
 #endif
     return std::nullopt;
+}
+
+u64 ProcKilobytesField(std::string_view text, std::string_view key) {
+    for (size_t start = 0; start < text.size();) {
+        size_t end = text.find('\n', start);
+        if (end == std::string_view::npos) {
+            end = text.size();
+        }
+        std::string_view line = text.substr(start, end - start);
+        start = end + 1;
+        if (!line.starts_with(key)) {
+            continue;
+        }
+        line.remove_prefix(key.size());
+        while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) {
+            line.remove_prefix(1);
+        }
+        u64 kilobytes = 0;
+        const auto [ptr, error] =
+            std::from_chars(line.data(), line.data() + line.size(), kilobytes);
+        if (error != std::errc{} || ptr == line.data()) {
+            return 0;
+        }
+        return kilobytes << 10;
+    }
+    return 0;
 }
 
 } // namespace Common
