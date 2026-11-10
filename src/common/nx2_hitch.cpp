@@ -65,13 +65,13 @@ void OnPresent(long long gap_us) {
     static int lines_in_window = 0;
     const Snapshot now = Take();
     if (gap_us >= ThresholdUs) {
-        // At most 20 lines a minute (a loading screen can stall many presents in a row).
+        // At most 60 lines a minute (a loading screen can stall many presents in a row).
         const u64 now_ns = NowNs();
         if (now_ns - window_start_ns >= 60'000'000'000ULL) {
             window_start_ns = now_ns;
             lines_in_window = 0;
         }
-        if (lines_in_window++ < 20) {
+        if (lines_in_window++ < 60) {
             const auto ms = [&](Cause cause) {
                 const auto i = static_cast<size_t>(cause);
                 return static_cast<double>(now.ns[i] - last.ns[i]) / 1e6;
