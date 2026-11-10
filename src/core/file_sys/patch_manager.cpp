@@ -179,7 +179,9 @@ constexpr std::array<u8, 140> HIGH_REFRESH_ROUTINE{
     0x48, 0x08, 0x23, 0x1E, 0xC0, 0x03, 0x5F, 0xD6, 0x0A, 0xD7, 0xA3, 0x3C,
     0x00, 0x00, 0x40, 0x40, 0x00, 0x00, 0x80, 0x3F,
 };
-constexpr size_t HIGH_REFRESH_ROUTINE_OFFSET = 0x3C46200;
+// Keep FPS Unlock at its original address and place high refresh away from other mods.
+constexpr size_t HIGH_REFRESH_ROUTINE_OFFSET = 0x3C46E00;
+constexpr std::array<u8, 4> HIGH_REFRESH_CALL{0x4F, 0x80, 0xD5, 0x94};
 constexpr size_t HIGH_REFRESH_SCALE = 0x88; // the speed scale word, in the routine
 // Keep the Lichii water routine for both modes. Each region must pass the original-byte or
 // executable-padding checks before any record is applied.
@@ -191,18 +193,15 @@ constexpr std::array<u8, OOT_CAVE_SIZE> HIGH_REFRESH_CAVE = [] {
     std::ranges::copy(HIGH_REFRESH_ROUTINE, cave.begin());
     return cave;
 }();
-constexpr std::array<u8, OOT_CAVE_SIZE> FPS_UNLOCK_CAVE = [] {
-    std::array<u8, OOT_CAVE_SIZE> cave{};
-    std::ranges::copy(FPS_UNLOCK_ROUTINE, cave.begin());
-    return cave;
-}();
+constexpr std::array<u8, OOT_CAVE_SIZE> EMPTY_HIGH_REFRESH_CAVE{};
 static_assert(OotHighRefreshCode::CallOffset == 0x6E6CC4 &&
               OotHighRefreshCode::WaterOffset == 0x475F8 &&
               OotHighRefreshCode::CaveOffset == HIGH_REFRESH_ROUTINE_OFFSET &&
               OotHighRefreshCode::CaveSize == OOT_CAVE_SIZE &&
               OotHighRefreshCode::ScaleOffset == HIGH_REFRESH_ROUTINE_OFFSET + HIGH_REFRESH_SCALE);
 constexpr std::array HIGH_REFRESH_RECORDS{
-    BuiltinPatchRecord{0x6E6CC4, DYNAMIC_FPS_CALL, DYNAMIC_FPS_ORIGINAL},
+    BuiltinPatchRecord{0x6E6CC4, HIGH_REFRESH_CALL, DYNAMIC_FPS_ORIGINAL},
+    BuiltinPatchRecord{0x3C46200, FPS_UNLOCK_ROUTINE, {}, true},
     BuiltinPatchRecord{HIGH_REFRESH_ROUTINE_OFFSET, HIGH_REFRESH_ROUTINE, {}, true},
     BuiltinPatchRecord{0x475F8, WATER_STEPS_CALL, WATER_STEPS_ORIGINAL},
     BuiltinPatchRecord{0x4760C, WATER_MUL_NOP, WATER_MUL_ORIGINAL},
@@ -1706,22 +1705,23 @@ std::optional<OotHighRefreshCode> ReadOotHighRefreshCode(std::span<const u8> cod
     Code parts;
     std::ranges::copy(code.subspan(Code::CallOffset, parts.call.size()), parts.call.begin());
     std::ranges::copy(code.subspan(Code::WaterOffset, parts.water.size()), parts.water.begin());
+    std::ranges::copy(code.subspan(Code::UnlockOffset, parts.unlock.size()), parts.unlock.begin());
     std::ranges::copy(code.subspan(Code::CaveOffset, parts.cave.size()), parts.cave.begin());
     return parts;
 }
 
 OotHighRefreshLayout GetOotHighRefreshLayout(const OotHighRefreshCode& code) {
-    if (code.call != DYNAMIC_FPS_CALL) {
+    if (code.water != WATER_STEPS_CALL || code.unlock != FPS_UNLOCK_ROUTINE) {
         return OotHighRefreshLayout::Unknown;
     }
-    if (code.water == WATER_STEPS_CALL && code.cave == FPS_UNLOCK_CAVE) {
+    if (code.call == DYNAMIC_FPS_CALL && code.cave == EMPTY_HIGH_REFRESH_CAVE) {
         return OotHighRefreshLayout::Off;
     }
     // The cave but the speed scale word, which the present pacing sets (Turbo, Slow).
     const auto cave = std::span<const u8>{code.cave};
     const auto ours = std::span<const u8>{HIGH_REFRESH_CAVE};
     constexpr size_t after_scale = HIGH_REFRESH_SCALE + 4;
-    if (code.water == WATER_STEPS_CALL &&
+    if (code.call == HIGH_REFRESH_CALL &&
         std::ranges::equal(cave.first(HIGH_REFRESH_SCALE), ours.first(HIGH_REFRESH_SCALE)) &&
         std::ranges::equal(cave.subspan(after_scale), ours.subspan(after_scale))) {
         return OotHighRefreshLayout::On;
@@ -1739,7 +1739,8 @@ std::optional<OotHighRefreshCode> SwitchOotHighRefreshCode(const OotHighRefreshC
         return code;
     }
     OotHighRefreshCode switched = code;
-    switched.cave = on ? HIGH_REFRESH_CAVE : FPS_UNLOCK_CAVE;
+    switched.cave = on ? HIGH_REFRESH_CAVE : EMPTY_HIGH_REFRESH_CAVE;
+    switched.call = on ? HIGH_REFRESH_CALL : DYNAMIC_FPS_CALL;
     return switched;
 }
 
@@ -1777,6 +1778,8 @@ OotHighRefreshSwitch SwitchOotHighRefreshStalled(Kernel::KProcess& process, u64 
     if (!memory.ReadBlock(code_address + Code::CallOffset, current.call.data(), current.call.size()) ||
         !memory.ReadBlock(code_address + Code::WaterOffset, current.water.data(),
                           current.water.size()) ||
+        !memory.ReadBlock(code_address + Code::UnlockOffset, current.unlock.data(),
+                          current.unlock.size()) ||
         !memory.ReadBlock(cave_address, current.cave.data(), current.cave.size())) {
         return OotHighRefreshSwitch::UnknownCode;
     }
@@ -1798,6 +1801,11 @@ OotHighRefreshSwitch SwitchOotHighRefreshStalled(Kernel::KProcess& process, u64 
     if (target->cave != current.cave) {
         memory.WriteBlock(cave_address, target->cave.data(), target->cave.size());
         Core::InvalidateInstructionCacheRange(&process, cave_address, target->cave.size());
+    }
+    if (target->call != current.call) {
+        memory.WriteBlock(code_address + Code::CallOffset, target->call.data(), target->call.size());
+        Core::InvalidateInstructionCacheRange(&process, code_address + Code::CallOffset,
+                                              target->call.size());
     }
     if (target->water != current.water) {
         memory.WriteBlock(code_address + Code::WaterOffset, target->water.data(),

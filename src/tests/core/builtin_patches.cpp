@@ -304,6 +304,7 @@ constexpr size_t OcarinaCave = FileSys::OotHighRefreshCode::CaveOffset;
 void WriteOotHighRefreshCode(std::span<u8> code, const FileSys::OotHighRefreshCode& parts) {
     std::ranges::copy(parts.call, code.begin() + FileSys::OotHighRefreshCode::CallOffset);
     std::ranges::copy(parts.water, code.begin() + FileSys::OotHighRefreshCode::WaterOffset);
+    std::ranges::copy(parts.unlock, code.begin() + FileSys::OotHighRefreshCode::UnlockOffset);
     std::ranges::copy(parts.cave, code.begin() + FileSys::OotHighRefreshCode::CaveOffset);
 }
 
@@ -518,9 +519,11 @@ TEST_CASE("High refresh rate built-in replaces Dark's routine only while its set
           "[patch_manager]") {
     constexpr std::string_view HighRefresh = "High refresh rate (built-in, experimental)";
     constexpr size_t Code = sizeof(Loader::NSOHeader);
-    constexpr size_t Routine = Code + 0x3C46200;
+    constexpr size_t BaseRoutine = Code + 0x3C46200;
+    constexpr size_t Routine = Code + 0x3C46E00;
     constexpr size_t CallOffset = Code + 0x6E6CC4;
     constexpr std::array<u8, 4> DynamicCall{0x4F, 0x7D, 0xD5, 0x94};
+    constexpr std::array<u8, 4> HighCall{0x4F, 0x80, 0xD5, 0x94};
     const auto word_at = [](const std::vector<u8>& nso, size_t offset) {
         u32 word;
         std::memcpy(&word, nso.data() + offset, sizeof(word));
@@ -543,8 +546,8 @@ TEST_CASE("High refresh rate built-in replaces Dark's routine only while its set
         Settings::values.oot_high_refresh.SetValue(false);
         const auto patched = context.Manager().PatchNSO(nso, "main");
         REQUIRE(std::equal(DynamicCall.begin(), DynamicCall.end(), patched.begin() + CallOffset));
-        REQUIRE(word_at(patched, Routine + 0x7C) == 0x40C00000);
-        for (size_t offset = 0x80; offset < 0x100; offset += 4) {
+        REQUIRE(word_at(patched, BaseRoutine + 0x7C) == 0x40C00000);
+        for (size_t offset = 0; offset < 0x110; offset += 4) {
             REQUIRE(word_at(patched, Routine + offset) == 0);
         }
         REQUIRE_FALSE(FileSys::OotHighRefreshScaleOffset(std::span{patched}.subspan(Code)));
@@ -555,7 +558,8 @@ TEST_CASE("High refresh rate built-in replaces Dark's routine only while its set
     SECTION("On: the high refresh routine, with its speed scale word") {
         Settings::values.oot_high_refresh.SetValue(true);
         const auto patched = context.Manager().PatchNSO(nso, "main");
-        REQUIRE(std::equal(DynamicCall.begin(), DynamicCall.end(), patched.begin() + CallOffset));
+        REQUIRE(std::equal(HighCall.begin(), HighCall.end(), patched.begin() + CallOffset));
+        REQUIRE(word_at(patched, BaseRoutine + 0x7C) == 0x40C00000);
         REQUIRE(word_at(patched, Routine + 0x18) == 0xB40002CC); // cbz x12, +0x70 (Dark's)
         REQUIRE(word_at(patched, Routine + 0x6C) == 0x14000002); // b +0x74
         REQUIRE(word_at(patched, Routine + 0x70) == 0xD65F03C0); // ret
@@ -564,15 +568,25 @@ TEST_CASE("High refresh rate built-in replaces Dark's routine only while its set
         REQUIRE(word_at(patched, Routine + 0x88) == 0x3F800000); // 1.0f
         REQUIRE(word_at(patched, Routine + 0x8C) == 0);
         REQUIRE(FileSys::OotHighRefreshScaleOffset(std::span{patched}.subspan(Code)) ==
-                std::optional<size_t>{0x3C46288});
+                std::optional<size_t>{0x3C46E88});
         REQUIRE(listed(context.Manager(), HighRefresh));
+    }
+
+    SECTION("On, with another mod immediately after FPS Unlock") {
+        Settings::values.oot_high_refresh.SetValue(true);
+        nso[BaseRoutine + 0x80] = 0x5A;
+        const auto patched = context.Manager().PatchNSO(nso, "main");
+        REQUIRE(patched[BaseRoutine + 0x80] == 0x5A);
+        REQUIRE(std::equal(HighCall.begin(), HighCall.end(), patched.begin() + CallOffset));
+        REQUIRE(FileSys::OotHighRefreshScaleOffset(std::span{patched}.subspan(Code)) ==
+                std::optional<size_t>{0x3C46E88});
     }
 
     SECTION("On, with the extended cave in use: FPS Unlock remains active") {
         Settings::values.oot_high_refresh.SetValue(true);
         nso[Routine + 0x80] = 1;
         const auto patched = context.Manager().PatchNSO(nso, "main");
-        REQUIRE(word_at(patched, Routine + 0x7C) == 0x40C00000);
+        REQUIRE(word_at(patched, BaseRoutine + 0x7C) == 0x40C00000);
         REQUIRE(word_at(patched, Routine + 0x80) == 1);
         REQUIRE_FALSE(FileSys::OotHighRefreshScaleOffset(std::span{patched}.subspan(Code)));
     }
@@ -581,7 +595,7 @@ TEST_CASE("High refresh rate built-in replaces Dark's routine only while its set
         Settings::values.oot_high_refresh.SetValue(true);
         Settings::values.disabled_addons[OcarinaTitleId] = {std::string{HighRefresh}};
         const auto patched = context.Manager().PatchNSO(nso, "main");
-        REQUIRE(word_at(patched, Routine + 0x7C) == 0x40C00000);
+        REQUIRE(word_at(patched, BaseRoutine + 0x7C) == 0x40C00000);
     }
 }
 
@@ -618,7 +632,7 @@ TEST_CASE("High refresh rate mode switches live between the two boot layouts",
         WriteOotHighRefreshCode(std::span{module}.subspan(Code), *switched_on);
         REQUIRE(std::ranges::equal(module, on));
         REQUIRE(FileSys::OotHighRefreshScaleOffset(std::span<const u8>{module}.subspan(Code)) ==
-                std::optional<size_t>{0x3C46288});
+                std::optional<size_t>{0x3C46E88});
 
         const auto switched_off = FileSys::SwitchOotHighRefreshCode(*switched_on, false);
         REQUIRE(switched_off);
@@ -661,7 +675,10 @@ TEST_CASE("High refresh rate mode switches live between the two boot layouts",
         auto stray_scale = *off_parts; // Off holds no speed scale word
         stray_scale.cave[Scale + 3] = 0x3F;
         REQUIRE(refused(stray_scale));
-        auto no_call = *off_parts; // Dark's routine off in Add-Ons: the game's own fdiv
+        auto modified_unlock = *off_parts;
+        modified_unlock.unlock[0] ^= 1;
+        REQUIRE(refused(modified_unlock));
+        auto no_call = *off_parts; // The FPS patch is off: the game's own fdiv
         no_call.call = {0x28, 0x18, 0x20, 0x1E};
         REQUIRE(refused(no_call));
         auto modded_water = *on_parts; // a mod's word at the water hook

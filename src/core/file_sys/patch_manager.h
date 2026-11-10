@@ -132,17 +132,20 @@ private:
 
 /// The parts of Ocarina of Time's main (offsets after its NSO header) that its high refresh rate
 /// mode changes. Off uses the FPS Unlock routine; on uses the high refresh routine with its speed
-/// scale at +0x88. Both modes use the Lichii water patch and the same call to the cave. Other
-/// layouts, including Dark's Dynamic FPS, are rejected by the live switch.
+/// scale at +0x88 in a separate cave. Both modes retain FPS Unlock and the Lichii water patch.
+/// Other layouts, including Dark's Dynamic FPS, are rejected by the live switch.
 struct OotHighRefreshCode {
     static constexpr size_t CallOffset = 0x6E6CC4;
     static constexpr size_t WaterOffset = 0x475F8;
-    static constexpr size_t CaveOffset = 0x3C46200;
+    static constexpr size_t UnlockOffset = 0x3C46200;
+    static constexpr size_t UnlockSize = 128;
+    static constexpr size_t CaveOffset = 0x3C46E00;
     static constexpr size_t CaveSize = 0x110;
     static constexpr size_t ScaleOffset = CaveOffset + 0x88;
 
     std::array<u8, 4> call{};
     std::array<u8, 4> water{};
+    std::array<u8, UnlockSize> unlock{};
     std::array<u8, CaveSize> cave{};
 };
 
