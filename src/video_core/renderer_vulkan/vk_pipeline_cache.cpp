@@ -1871,6 +1871,9 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
         last_cache_size.store(size, std::memory_order_relaxed);
         last_flush = std::chrono::steady_clock::now();
     }
+    // The boot builds are done: the driver's compiler scratch and the records they read are
+    // freed, but glibc keeps the pages.
+    QueueHeapTrim("the boot pipeline builds");
     if (state.statistics) {
         state.statistics->Report();
     }
@@ -3542,6 +3545,11 @@ void PipelineCache::TickFrame() {
     while (!evicted_pipelines.empty() && scheduler.IsFree(evicted_pipelines.front().first)) {
         evicted_pipelines.pop_front();
     }
+    // The evicted pipelines are destroyed, but their driver memory stays with glibc until a trim.
+    if (trim_after_evictions && evicted_pipelines.empty()) {
+        trim_after_evictions = false;
+        QueueHeapTrim("evicting pipelines");
+    }
     while (!retired_compute_pipelines.empty() &&
            scheduler.IsFree(retired_compute_pipelines.front().first) &&
            retired_compute_pipelines.front().second->IsBuildTaskDone()) {
@@ -3632,6 +3640,17 @@ void PipelineCache::EvictUnusedPipelines() {
              kept_stages.Bytes() >> 10, rebuilt_from_kept, translated_again);
     rebuilt_from_kept = 0;
     translated_again = 0;
+    trim_after_evictions = true;
+}
+
+void PipelineCache::QueueHeapTrim([[maybe_unused]] const char* reason) {
+    // On the serialization thread (one worker, background cores). malloc_trim locks one arena at
+    // a time, so a thread that allocates from the arena being walked waits for that slice. The
+    // call itself does not run on the GPU thread. TrimHeap does nothing off Linux with glibc, so
+    // nothing is queued there.
+#if defined(__linux__) && defined(__GLIBC__)
+    serialization_thread.QueueWork([reason] { Common::TrimHeap(reason); });
+#endif
 }
 
 /// Returns `pipeline` when it is built or the current draw must wait for it, and nullptr when the

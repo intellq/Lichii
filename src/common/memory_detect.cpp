@@ -27,6 +27,13 @@
 #include <string>
 #endif
 
+#if defined(__linux__) && defined(__GLIBC__)
+#include <chrono>
+#include <malloc.h>
+#include <unistd.h>
+#endif
+
+#include "common/logging.h"
 #include "common/memory_detect.h"
 
 namespace Common {
@@ -151,6 +158,40 @@ u64 ProcKilobytesField(std::string_view text, std::string_view key) {
         return kilobytes << 10;
     }
     return 0;
+}
+
+#if defined(__linux__) && defined(__GLIBC__)
+namespace {
+/// Resident set in bytes from /proc/self/statm (its second field, in pages), 0 when unreadable.
+u64 ResidentBytes() {
+    std::ifstream file{"/proc/self/statm"};
+    u64 size = 0;
+    u64 resident = 0;
+    if (!(file >> size >> resident)) {
+        return 0;
+    }
+    return resident * static_cast<u64>(sysconf(_SC_PAGESIZE));
+}
+} // Anonymous namespace
+#endif
+
+HeapTrimResult TrimHeap([[maybe_unused]] std::string_view reason) {
+    HeapTrimResult result{};
+#if defined(__linux__) && defined(__GLIBC__)
+    result.resident_before = ResidentBytes();
+    const auto start = std::chrono::steady_clock::now();
+    const int released = malloc_trim(0);
+    const double ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    result.resident_after = ResidentBytes();
+    const s64 handed_back =
+        (static_cast<s64>(result.resident_before) - static_cast<s64>(result.resident_after)) >> 20;
+    LOG_INFO(Common_Memory,
+             "malloc_trim after {}: resident {} -> {} MiB ({} MiB handed back) in {:.1f} ms{}",
+             reason, result.resident_before >> 20, result.resident_after >> 20, handed_back, ms,
+             released != 0 ? "" : " (nothing to release)");
+#endif
+    return result;
 }
 
 } // namespace Common

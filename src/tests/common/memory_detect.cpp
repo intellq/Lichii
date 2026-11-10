@@ -47,3 +47,33 @@ TEST_CASE("ProcKilobytesField gives 0 for missing or malformed fields", "[common
     // The last line without its newline (a truncated read) still counts.
     CHECK(Common::ProcKilobytesField("CommitLimit:   1000 kB", "CommitLimit:") == 1000 * KiB);
 }
+
+#if defined(__linux__) && defined(__GLIBC__)
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+
+TEST_CASE("TrimHeap hands freed heap pages back to the system", "[common]") {
+    // Every other block freed: the free space sits between live blocks, below the top of the
+    // heap, where glibc never gives it back on its own.
+    constexpr size_t BlockSize = 64 * 1024 - 64;
+    constexpr size_t Blocks = 2048; // ~128 MiB
+    std::vector<void*> blocks(Blocks);
+    for (void*& block : blocks) {
+        block = std::malloc(BlockSize);
+        REQUIRE(block != nullptr);
+        std::memset(block, 1, BlockSize);
+    }
+    for (size_t i = 0; i < Blocks; i += 2) {
+        std::free(blocks[i]);
+        blocks[i] = nullptr;
+    }
+    const Common::HeapTrimResult result = Common::TrimHeap("the test");
+    CHECK(result.resident_before > result.resident_after);
+    // About half the blocks were freed; at least a quarter of their bytes must go back.
+    CHECK(result.resident_before - result.resident_after >= Blocks / 2 * BlockSize / 4);
+    for (void* block : blocks) {
+        std::free(block);
+    }
+}
+#endif

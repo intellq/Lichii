@@ -42,4 +42,18 @@ struct ProcessMemoryUsage {
 /// includes the colon and must start a line. 0 when the field is missing or malformed.
 [[nodiscard]] u64 ProcKilobytesField(std::string_view text, std::string_view key);
 
+/// This process's resident set around one TrimHeap call, in bytes (0 where it does nothing).
+struct HeapTrimResult {
+    u64 resident_before{};
+    u64 resident_after{};
+};
+
+/// Linux with glibc: malloc_trim(0), which hands the free pages inside every malloc arena back to
+/// the system, and one log line with the resident set before and after. glibc only gives back
+/// free memory at the top of an arena by itself, so what a burst of frees leaves between live
+/// blocks (thousands of destroyed pipelines, the boot builds' compiler scratch) stays resident.
+/// It locks one arena at a time, so a thread that allocates from the arena being walked waits
+/// for that slice: call it off the GPU thread. Does nothing elsewhere.
+HeapTrimResult TrimHeap(std::string_view reason);
+
 } // namespace Common
