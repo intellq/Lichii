@@ -9,6 +9,7 @@
 
 #include "common/assert.h"
 #include "common/logging.h"
+#include "common/nx2_hitch.h"
 #include "common/settings.h"
 #include "core/core.h"
 #include "video_core/nx2_profile.h"

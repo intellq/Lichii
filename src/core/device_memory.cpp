@@ -12,6 +12,7 @@
 #endif
 
 #include "core/device_memory.h"
+#include "common/nx2_hitch.h"
 #include "hle/kernel/board/nintendo/nx/k_system_control.h"
 
 namespace Core {
@@ -53,7 +54,9 @@ void DeviceMemory::TrimZeroPages(std::stop_token stop) {
             return;
         }
         const auto start = std::chrono::steady_clock::now();
+        Common::Nx2Hitch::ZeroTrimBegin();
         const auto [resident, trimmed] = buffer.TrimZeroPages();
+        Common::Nx2Hitch::ZeroTrimEnd();
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now() - start)
                             .count();

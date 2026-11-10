@@ -11,6 +11,7 @@
 
 #include "common/common_types.h"
 #include "common/logging.h"
+#include "common/nx2_hitch.h"
 
 // Async read-back: a guest CPU read of GPU-written buffer memory (GPU::OnCPURead) has the GPU
 // thread submit the downloads and go on. The reading thread waits for that submission and writes
@@ -134,6 +135,7 @@ inline void Add(std::atomic<u64>& counter, u64 amount) {
 inline void CountRead(Read kind, u64 ns) {
     Add(g_counters.reads[static_cast<size_t>(kind)], 1);
     Add(g_counters.read_ns[static_cast<size_t>(kind)], ns);
+    Common::Nx2Hitch::Add(Common::Nx2Hitch::Cause::ReadBack, ns);
 }
 
 /// BufferCache::FinishReadDownloads waited ns for the host GPU.
