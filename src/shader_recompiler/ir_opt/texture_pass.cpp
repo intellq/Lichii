@@ -27,6 +27,7 @@
 #include "shader_recompiler/frontend/ir/breadth_first_search.h"
 #include "shader_recompiler/frontend/ir/ir_emitter.h"
 #include "shader_recompiler/host_translate_info.h"
+#include "shader_recompiler/ir_opt/bindless_table.h"
 #include "shader_recompiler/ir_opt/passes.h"
 #include "shader_recompiler/shader_info.h"
 
@@ -1023,22 +1024,6 @@ void TrimTrailingTees(std::vector<u32>& code) {
         }
     }
     code.resize(end);
-}
-
-// Elements of the descriptor array of a handle read from a table at an index word (see
-// g_handle_index_allowed): the table entries a draw binds, larger indices taking the last one.
-// LICHII_BINDLESS_TABLE overrides it (1 to 1024), 0 turning such arrays off (the shader then
-// gets whatever constant buffer word the earlier search finds, as before them).
-u32 HandleTableSize() {
-    static const u32 size = [] {
-        const char* const value = std::getenv("LICHII_BINDLESS_TABLE");
-        if (value == nullptr || value[0] == '\0') {
-            return 64U;
-        }
-        const long parsed = std::strtol(value, nullptr, 10);
-        return static_cast<u32>(std::clamp(parsed, 0L, 1024L));
-    }();
-    return size;
 }
 
 // The block of each instruction and the immediate dominator of each block of the program the

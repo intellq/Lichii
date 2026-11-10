@@ -12,6 +12,7 @@
 #include "shader_recompiler/frontend/ir/ir_emitter.h"
 #include "shader_recompiler/frontend/maxwell/translate_program.h"
 #include "shader_recompiler/host_translate_info.h"
+#include "shader_recompiler/ir_opt/bindless_table.h"
 #include "shader_recompiler/ir_opt/passes.h"
 #include "video_core/shader_handle_program.h"
 
@@ -975,4 +976,15 @@ TEST_CASE("A texture handle word that holds a storage buffer address is not a ha
     desc.cbuf_index = 0;
     desc.handle_program = 0; // computed for each draw: a real handle
     CHECK_FALSE(VideoCommon::HandleIsStoragePointer(info, desc, 0));
+}
+
+TEST_CASE("Bindless table size uses the same normalized setting for shader preparation",
+          "[texture_handles]") {
+    using Shader::Optimization::ParseHandleTableSize;
+    CHECK(ParseHandleTableSize(nullptr) == 64);
+    CHECK(ParseHandleTableSize("") == 64);
+    CHECK(ParseHandleTableSize("0") == 0);
+    CHECK(ParseHandleTableSize("32") == 32);
+    CHECK(ParseHandleTableSize("-1") == 0);
+    CHECK(ParseHandleTableSize("2048") == 1024);
 }

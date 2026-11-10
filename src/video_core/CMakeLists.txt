@@ -538,6 +538,34 @@ add_custom_command(
     DEPENDS ${lowering_inputs} "${PROJECT_SOURCE_DIR}/CMakeModules/GenerateShaderLoweringStamp.cmake"
     VERBATIM)
 target_sources(video_core PRIVATE "${lowering_stamp}")
+
+# Precompiled shader info contains SPIR-V, so it must track translation and emission sources.
+file(GLOB_RECURSE precompiled_shader_sources CONFIGURE_DEPENDS RELATIVE "${lowering_source_dir}"
+     "${lowering_source_dir}/shader_recompiler/*")
+list(APPEND precompiled_shader_sources
+     video_core/native_lowering.cpp video_core/native_lowering.h video_core/mkw_wave_workaround.h
+     video_core/shader_handle_program.h
+     video_core/renderer_vulkan/pipeline_shader_emission.h
+     video_core/renderer_vulkan/vk_pipeline_cache.cpp
+     video_core/renderer_vulkan/vk_graphics_pipeline.cpp
+     video_core/renderer_vulkan/vk_compute_pipeline.cpp)
+list(SORT precompiled_shader_sources)
+list(TRANSFORM precompiled_shader_sources PREPEND "${lowering_source_dir}/"
+     OUTPUT_VARIABLE precompiled_shader_inputs)
+list(JOIN precompiled_shader_sources "\n" precompiled_shader_file_list)
+set(precompiled_shader_list "${CMAKE_CURRENT_BINARY_DIR}/generated/precompiled_shader_files.txt")
+file(GENERATE OUTPUT "${precompiled_shader_list}" CONTENT "${precompiled_shader_file_list}\n")
+set(precompiled_shader_stamp
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/video_core/shader_cache_v2/precompiled_shader_stamp.h")
+add_custom_command(
+    OUTPUT "${precompiled_shader_stamp}"
+    COMMAND ${CMAKE_COMMAND} "-DSOURCE_DIR=${lowering_source_dir}"
+            "-DFILE_LIST=${precompiled_shader_list}" "-DOUTPUT=${precompiled_shader_stamp}"
+            -P "${PROJECT_SOURCE_DIR}/CMakeModules/GeneratePrecompiledShaderStamp.cmake"
+    DEPENDS ${precompiled_shader_inputs} "${precompiled_shader_list}"
+            "${PROJECT_SOURCE_DIR}/CMakeModules/GeneratePrecompiledShaderStamp.cmake"
+    VERBATIM)
+target_sources(video_core PRIVATE "${precompiled_shader_stamp}")
 target_include_directories(video_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(video_core PUBLIC shader_recompiler stb bc_decoder gpu_logging)
 if (ENABLE_OPENGL)

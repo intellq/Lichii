@@ -39,6 +39,7 @@
 #include "shader_recompiler/exception.h"
 #include "shader_recompiler/frontend/maxwell/control_flow.h"
 #include "shader_recompiler/frontend/maxwell/translate_program.h"
+#include "shader_recompiler/ir_opt/bindless_table.h"
 #include "shader_recompiler/ir_opt/passes.h"
 #include "shader_recompiler/program_header.h"
 #include "video_core/engines/kepler_compute.h"
@@ -46,6 +47,7 @@
 #include "video_core/memory_manager.h"
 #include "video_core/nx2_perf.h"
 #include "video_core/nx2_profile.h"
+#include "video_core/shader_cache_v2/precompiled_shader_stamp.h"
 #include "video_core/nx2_stutter_trace.h"
 #include "video_core/pipeline_cache_files.h"
 #include "video_core/renderer_vulkan/async_draw_policy.h"
@@ -2135,11 +2137,14 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
     const bool radv_vulkan_cache =
         use_vulkan_pipeline_cache && device.GetDriverID() == VK_DRIVER_ID_MESA_RADV;
     const std::string stamp = fmt::format(
-        "{} {} {:#x} {} {} scale {} {}/{} bloom {} loops {} debug {}{}\n", file_size, modified,
-        device.GetDriverVersion(), Common::g_scm_rev, device.GetModelName(), resolution.active,
-        resolution.up_scale, resolution.down_shift, Settings::values.fix_bloom_effects.GetValue(),
+        "{} {} {:#x} {} {} scale {} {}/{} bloom {} loops {} debug {}{} shader {:#x} table {} {}\n",
+        file_size, modified, device.GetDriverVersion(), Common::g_scm_rev, device.GetModelName(),
+        resolution.active, resolution.up_scale, resolution.down_shift,
+        Settings::values.fix_bloom_effects.GetValue(),
         Settings::values.disable_shader_loop_safety_checks.GetValue(),
-        Settings::values.renderer_debug.GetValue(), radv_vulkan_cache ? " radv-vulkan-cache-1" : "");
+        Settings::values.renderer_debug.GetValue(), radv_vulkan_cache ? " radv-vulkan-cache-1" : "",
+        VideoCommon::ShaderCacheV2::PrecompiledShaderStamp,
+        host_info.support_handle_table_arrays, Shader::Optimization::HandleTableSize());
     const char* force = std::getenv("EDEN_NX2_PRECOMPILED_FORCE");
     if (!(force && force[0] == '1')) {
         std::ifstream stamp_file(stamp_path, std::ios::binary);
