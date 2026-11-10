@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <compare>
+#include <condition_variable>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -188,8 +189,15 @@ public:
     }
 
     void RemoveListener(const void* owner) {
-        std::scoped_lock lk{mutex};
-        listeners.erase(owner);
+        {
+            std::scoped_lock lk{mutex};
+            listeners.erase(owner);
+        }
+        // The notifications run outside `mutex`: wait for any copied listener call of this owner
+        // (or another) still in flight before returning, so the owner's destructor — which calls
+        // this — cannot destroy the object a running callback captures.
+        std::unique_lock lk{notify_mutex};
+        notify_cv.wait(lk, [this] { return active_notifications == 0; });
     }
 
     // A new emulation session starts: forget the previous game's mappings and device ranges (its
@@ -365,10 +373,24 @@ private:
                 }
             }
         }
+        {
+            std::scoped_lock lk{notify_mutex};
+            active_notifications += calls.size();
+        }
         for (auto& call : calls) {
             call();
         }
+        {
+            std::scoped_lock lk{notify_mutex};
+            active_notifications -= calls.size();
+        }
+        notify_cv.notify_all();
     }
+
+    /// Number of copied listener calls currently running outside `mutex`; see RemoveListener.
+    std::mutex notify_mutex;
+    std::condition_variable notify_cv;
+    size_t active_notifications = 0;
 };
 
 // Device node that Switch 2 nvgpu drivers open but Switch 1 never had (e.g. /dev/nvhost-tsg-gpu).
