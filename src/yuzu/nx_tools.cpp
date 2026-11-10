@@ -41,7 +41,6 @@
 
 #include <nxformat.h>
 
-#include "common/error.h"
 #include "common/fs/fs_util.h"
 #include "common/fs/path_util.h"
 #include "common/logging.h"
@@ -58,10 +57,6 @@
 #include "frontend_common/nx_archive.h"
 #include "qt_common/qt_common.h"
 #include "yuzu/nx_tools.h"
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 namespace {
 
@@ -415,35 +410,6 @@ NxTools::~NxTools() {
     }
 }
 
-bool NxTools::LoadNxformat() {
-#ifdef _WIN32
-    // lichii.exe delay-loads nxformat.dll, so Lichii starts even when Windows refuses to load it
-    // (Smart App Control and code integrity policies block unsigned DLLs). The tools load it here
-    // before their first nxformat call, which would otherwise end the process.
-    static const DWORD error =
-        LoadLibraryExW(L"nxformat.dll", nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) ? 0
-                                                                                    : GetLastError();
-    if (error == 0) {
-        return true;
-    }
-    const auto reason = Common::NativeErrorToString(static_cast<int>(error));
-    LOG_ERROR(Frontend, "Could not load nxformat.dll: error {}: {}", error, reason);
-    // 4550-4599 are the ERROR_SYSTEM_INTEGRITY_* codes of a code integrity block.
-    const bool blocked = error == ERROR_INVALID_IMAGE_HASH || (error >= 4550 && error <= 4599);
-    QMessageBox::warning(
-        parent_widget, tr("NX Archive"),
-        blocked ? tr("NX converter unavailable: Windows blocked nxformat.dll (Smart App Control or "
-                     "a code integrity policy). Error %1.")
-                      .arg(error)
-                : tr("NX converter unavailable: could not load nxformat.dll. Error %1: %2")
-                      .arg(error)
-                      .arg(QString::fromStdString(reason)));
-    return false;
-#else
-    return true;
-#endif
-}
-
 bool NxTools::CanConvert(const std::string& game_path) {
     return KindOf(game_path) != Kind::None;
 }
@@ -453,7 +419,7 @@ bool NxTools::IsNxArchive(const std::string& game_path) {
 }
 
 void NxTools::ConvertToNx(const std::string& game_path) {
-    if (running || !LoadNxformat()) {
+    if (running) {
         return;
     }
     const QString title = tr("Convert to NX");
@@ -563,7 +529,7 @@ void NxTools::ConvertToNx(const std::string& game_path) {
 }
 
 void NxTools::AddToNx(const std::string& archive_path) {
-    if (running || !LoadNxformat()) {
+    if (running) {
         return;
     }
     const QString title = tr("Add to NX");
@@ -642,7 +608,7 @@ void NxTools::AddToNx(const std::string& archive_path) {
 }
 
 void NxTools::RemoveFromNx(const std::string& archive_path) {
-    if (running || !LoadNxformat()) {
+    if (running) {
         return;
     }
     const QString title = tr("Remove from NX");
@@ -711,7 +677,7 @@ void NxTools::RemoveFromNx(const std::string& archive_path) {
 
 void NxTools::EditNxMetadata(const std::string& archive_path,
                              const std::function<bool()>& prepare_write) {
-    if (running || !LoadNxformat()) {
+    if (running) {
         return;
     }
     const QString title = tr("Edit NX Metadata");

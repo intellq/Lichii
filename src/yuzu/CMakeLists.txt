@@ -503,11 +503,5 @@ if (TARGET nxformat::static_nozstd)
     target_sources(yuzu PRIVATE nx_tools.h nx_tools.cpp)
     target_link_libraries(yuzu PRIVATE nxformat::static_nozstd)
     target_compile_definitions(yuzu PRIVATE LICHII_NX_TOOLS)
-    if (MSVC)
-        # Windows may refuse to load the unsigned DLL (Smart App Control, code integrity
-        # policies); delay-loaded, only the NX tools are lost, and NxTools::LoadNxformat says so.
-        target_link_options(yuzu PRIVATE /DELAYLOAD:nxformat.dll)
-        target_link_libraries(yuzu PRIVATE delayimp)
-    endif()
 endif()
 create_target_directory_groups(yuzu)
