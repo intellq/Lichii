@@ -3766,6 +3766,8 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
         return Tegra::g_nx2_ampere.load(std::memory_order_relaxed) && creating_render_target &&
                new_info.type == ImageType::e2D && new_info.resources.levels == 1 &&
                new_info.resources.layers == 1 && new_info.num_samples == 1 &&
+               False(new_image.flags & (ImageFlagBits::Sparse | ImageFlagBits::SparseLayers |
+                                        ImageFlagBits::SparseTiles | ImageFlagBits::Unbacked)) &&
                stale_pages.IsAll(new_image.cpu_addr, new_image.guest_size_bytes) &&
                !Tegra::Nx2MayBeGpuWritten(new_image.cpu_addr, new_image.guest_size_bytes);
     };
