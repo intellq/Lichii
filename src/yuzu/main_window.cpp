@@ -1394,6 +1394,9 @@ void MainWindow::InitializeHotkeys() {
             ToggleFullscreen();
         }
     });
+    // A second key for the settings, besides Configure's own (Ctrl+, by default).
+    connect_shortcut(QStringLiteral("Configure (Alternate)"),
+                     [this] { ui->action_Configure->trigger(); });
     connect_shortcut(QStringLiteral("Change Adapting Filter"), &MainWindow::OnToggleAdaptingFilter);
     connect_shortcut(QStringLiteral("Change Docked Mode"), &MainWindow::OnToggleDockedMode);
     connect_shortcut(QStringLiteral("Change GPU Mode"), &MainWindow::OnToggleGpuAccuracy);
