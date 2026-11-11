@@ -38,6 +38,7 @@
 #include "video_core/texture_cache/conversion.h"
 #include "video_core/texture_cache/host_memory_limit.h"
 #include "video_core/texture_cache/host_mip_limits.h"
+#include "video_core/texture_cache/eviction_age.h"
 #include "video_core/texture_cache/image_view_base.h"
 #include "video_core/texture_cache/samples_helper.h"
 #include "video_core/texture_cache/texture_cache_base.h"
@@ -149,7 +150,9 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
     bool evict_old_costly = false;
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
-    // EDEN_NX2_TC_MIN_AGE=<frames>: never evict images used more recently (thrash tests).
+    // EDEN_NX2_TC_MIN_AGE=<frames> delays routine eviction for thrash diagnostics. Never apply it
+    // in the emergency pass: stale overrides can otherwise disable reclamation under critical
+    // VRAM pressure (Ocarina of Time, #1290).
     static const u64 min_age = [] {
         const char* value = std::getenv("EDEN_NX2_TC_MIN_AGE");
         return value != nullptr ? std::strtoull(value, nullptr, 10) : 0ULL;
@@ -159,7 +162,7 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
         aggressive_mode =
             allow_aggressive && (out_of_memory || total_used_memory >= critical_memory);
         ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
-        ticks_to_destroy = (std::max)(ticks_to_destroy, min_age);
+        ticks_to_destroy = TextureGcEffectiveMinAge(ticks_to_destroy, min_age, aggressive_mode);
         num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
         // Past the critical memory, 40 images a frame is not enough where the game makes more:
         // breaking pots in Ocarina of Time's Hyrule Castle makes ~55 a frame (25 384x384 shadow
