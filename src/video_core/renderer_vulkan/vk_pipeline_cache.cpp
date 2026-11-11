@@ -1244,6 +1244,8 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         pipeline_binaries.reset();
     }
 
+    // A skip pressed in an earlier boot that no step took is not this boot's.
+    VideoCommon::ShaderWarm::ClearSkipWarm();
     namespace StutterTrace = VideoCommon::StutterTrace;
     const auto load_begin = std::chrono::steady_clock::now();
     StutterTrace::BootMarker("shader_load_begin");
@@ -2499,6 +2501,18 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
     // the IR is freed before the driver compiles. The scheduler's memory budget bounds the stages
     // that run at once. Soon: the game waits for this step, while the background prebuild doesn't.
     const VideoCommon::ShaderJobBatch batch = shader_jobs->CreateBatch();
+    // The loading screen's Skip button ends this step as a stop would, but leaves the game
+    // running: the next boot prepares the pipelines again.
+    std::stop_source prepare_stop;
+    const std::stop_callback forward_stop{stop_loading,
+                                          [&prepare_stop] { prepare_stop.request_stop(); }};
+    const std::stop_token stop_prepare = prepare_stop.get_token();
+    const auto stopped = [&prepare_stop, &stop_prepare] {
+        if (VideoCommon::ShaderWarm::SkipWarmRequested()) {
+            prepare_stop.request_stop();
+        }
+        return stop_prepare.stop_requested();
+    };
     LOG_INFO(Render_Vulkan, "Preparing {} precompiled pipelines from {}, from record {}", total,
              Common::FS::PathToUTF8String(path), start_index);
     if (start_index != 0) {
@@ -2509,7 +2523,7 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
     }
     callback(VideoCore::LoadCallbackStage::Build, start_index, total);
     for (size_t index = start_index; index < total; ++index) {
-        if (stop_loading.stop_requested()) {
+        if (stopped()) {
             break;
         }
         auto& record = records[index];
@@ -2536,8 +2550,13 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
         {
             std::unique_lock lock{state.mutex};
             // Stopping cancels the jobs, so the slots would never free up.
-            if (!state.cv.wait(lock, stop_loading,
-                               [&] { return state.in_flight < max_in_flight; })) {
+            // A finished job wakes the wait, which then also sees a skip request.
+            if (!state.cv.wait(lock, stop_prepare,
+                               [&] {
+                                   return state.in_flight < max_in_flight ||
+                                          VideoCommon::ShaderWarm::SkipWarmRequested();
+                               }) ||
+                stopped()) {
                 break;
             }
             ++state.in_flight;
@@ -2614,7 +2633,7 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
             &batch);
     }
     while (!batch.Idle()) {
-        if (stop_loading.stop_requested()) {
+        if (stopped()) {
             shader_jobs->Cancel(batch);
             break;
         }
@@ -2625,7 +2644,11 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
         std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
     LOG_INFO(Render_Vulkan, "Precompiled pipelines: {} prepared, {} failed, {} skipped, in {:.1f} s",
              state.built, state.failed, state.skipped, seconds);
-    if (stop_loading.stop_requested()) {
+    if (stop_prepare.stop_requested()) {
+        if (!stop_loading.stop_requested()) {
+            LOG_INFO(Render_Vulkan, "Precompiled pipelines skipped from the loading screen: the "
+                                    "next boot prepares them again");
+        }
         kept.file.close();
         std::filesystem::remove(kept_temporary, error);
         // The next boot prepares from the first record again, so the infos it keeps are

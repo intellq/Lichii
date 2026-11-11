@@ -98,11 +98,11 @@ LoadingScreen::LoadingScreen(QWidget* parent)
     connect(this, &LoadingScreen::LoadProgress, this, &LoadingScreen::OnLoadProgress,
             Qt::QueuedConnection);
 
-    // Shown while shaders are precached: starts the game without waiting for the rest.
+    // Shown while shaders are loaded or precached: starts the game without waiting for the rest.
     skip_button = new QPushButton(tr("Skip"), this);
     skip_button->setStyleSheet(QString::fromUtf8(SKIP_BUTTON_STYLE));
-    skip_button->setToolTip(tr("Start the game now. The shaders not precached yet are precached "
-                               "on a later launch."));
+    skip_button->setToolTip(tr("Start the game now. The shaders not prepared or precached yet "
+                               "are done on a later launch."));
     skip_button->hide();
     ui->verticalLayout->insertWidget(2, skip_button, 0, Qt::AlignHCenter | Qt::AlignTop);
     connect(skip_button, &QPushButton::clicked, this, [this] {
@@ -172,7 +172,8 @@ void LoadingScreen::OnLoadProgress(VideoCore::LoadCallbackStage stage, std::size
         } else {
             ui->progress_bar->show();
         }
-        skip_button->setVisible(stage == VideoCore::LoadCallbackStage::Warm);
+        skip_button->setVisible(stage == VideoCore::LoadCallbackStage::Build ||
+                                stage == VideoCore::LoadCallbackStage::Warm);
         skip_button->setEnabled(true);
         previous_stage = stage;
         // reset back to fast shader compiling since the stage changed

@@ -383,6 +383,14 @@ bool TakeSkipWarm() {
     return skip_warm.exchange(false, std::memory_order_relaxed);
 }
 
+bool SkipWarmRequested() {
+    return skip_warm.load(std::memory_order_relaxed);
+}
+
+void ClearSkipWarm() {
+    skip_warm.store(false, std::memory_order_relaxed);
+}
+
 fs::path PrecachedPipelinesPath(u64 title_id) {
     return TitleDir(title_id) / "precache-graphics.bin";
 }
