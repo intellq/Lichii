@@ -1876,8 +1876,8 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
     const size_t graphics_jobs = jobs.size();
     const std::filesystem::path warm_file = ShaderWarm::ComputeWarmPath(title_id);
     // Keep each translator's marker separate while sharing the input and Vulkan cache.
-    const auto warm_marker_file = warm_file.parent_path() /
-        fmt::format("warm-compute-{:#x}.bin", VideoCommon::ShaderCacheV2::PrecompiledShaderStamp);
+    const auto warm_marker_file =
+        ShaderWarm::WarmVariantPath(warm_file, VideoCommon::ShaderCacheV2::PrecompiledShaderStamp);
     const std::string path = Common::FS::PathToUTF8String(warm_file);
     // Based on Lichii PR #1174: warm shaders again when their emitted variant changes.
     const auto& resolution = Settings::values.resolution_info;

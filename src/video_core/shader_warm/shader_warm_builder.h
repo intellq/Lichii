@@ -29,6 +29,9 @@ std::filesystem::path ComputeWarmPath(u64 title_id);
 /// emulator after the precache ran to the end. A matching marker skips the precache at boot.
 std::filesystem::path WarmMarkerPath(const std::filesystem::path& warm_file);
 
+/// A distinct marker input for each shader translator; the precache input remains shared.
+std::filesystem::path WarmVariantPath(const std::filesystem::path& warm_file, u64 variant);
+
 /// Entry count of a precache file, written by the builder next to it (extension .count): the
 /// entry count and the file's size. The file format has no count, so the loading screen shows
 /// exact progress only with this.

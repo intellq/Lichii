@@ -94,6 +94,21 @@ TEST_CASE("ShaderPrecache: launch requests are taken once", "[video_core]") {
     REQUIRE(ShaderWarm::TakeWarmBeforeStart());
 }
 
+TEST_CASE("ShaderPrecache: translator variants keep separate markers for one input", "[video_core]") {
+    TempDir dir;
+    const auto warm = dir.path / "warm-compute.bin";
+    WriteBytes(warm, "precache");
+    const auto stamp = ShaderWarm::CurrentWarmStamp(warm, 12, 0x1234, 0x2206, 54);
+    REQUIRE(stamp.has_value());
+    const auto first = ShaderWarm::WarmVariantPath(warm, 1);
+    const auto second = ShaderWarm::WarmVariantPath(warm, 2);
+    REQUIRE(first != second);
+    REQUIRE(ShaderWarm::WriteWarmMarker(first, *stamp));
+    REQUIRE(ShaderWarm::ReadWarmMarker(first).has_value());
+    REQUIRE_FALSE(ShaderWarm::ReadWarmMarker(second).has_value());
+    REQUIRE_FALSE(ShaderWarm::ReadWarmMarker(warm).has_value());
+}
+
 TEST_CASE("ShaderPrecache: the marker matches only the same file and driver", "[video_core]") {
     TempDir dir;
     const auto warm = dir.path / "warm-compute.bin";

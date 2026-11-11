@@ -23,6 +23,7 @@
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "common/thread.h"
+#include "video_core/shader_cache_v2/precompiled_shader_stamp.h"
 #include "core/core.h"
 #include "core/file_sys/nup_container.h"
 #include "core/file_sys/romfs.h"
@@ -302,6 +303,10 @@ fs::path WarmMarkerPath(const fs::path& warm_file) {
     return marker;
 }
 
+fs::path WarmVariantPath(const fs::path& warm_file, u64 variant) {
+    return warm_file.parent_path() / fmt::format("warm-compute-{:#x}.bin", variant);
+}
+
 fs::path WarmCountPath(const fs::path& warm_file) {
     fs::path count = warm_file;
     count.replace_extension(".count");
@@ -356,8 +361,9 @@ bool WriteWarmMarker(const fs::path& warm_file, const WarmStamp& stamp) {
 
 bool WarmPending(u64 title_id) {
     const auto file = ComputeWarmPath(title_id);
+    const auto marker_file = WarmVariantPath(file, ShaderCacheV2::PrecompiledShaderStamp);
     std::error_code ec;
-    return !fs::exists(file, ec) || !fs::exists(WarmMarkerPath(file), ec);
+    return !fs::exists(file, ec) || !fs::exists(WarmMarkerPath(marker_file), ec);
 }
 
 void RequestWarmBeforeStart(bool before_start) {
@@ -426,7 +432,9 @@ bool DeleteWarmFiles(u64 title_id, std::string* error) {
     tmp += ".tmp";
     bool ok = true;
     for (const auto& path :
-         {warm, WarmMarkerPath(warm), WarmCountPath(warm), tmp, PrecachedPipelinesPath(title_id)}) {
+         {warm, WarmMarkerPath(warm),
+          WarmMarkerPath(WarmVariantPath(warm, ShaderCacheV2::PrecompiledShaderStamp)),
+          WarmCountPath(warm), tmp, PrecachedPipelinesPath(title_id)}) {
         std::error_code ec;
         fs::remove(path, ec);
         if (ec) {
@@ -635,6 +643,8 @@ Result BuildWarmFilesWith(Core::System& system, const fs::path& game_path, u64 t
     // A new file: the marker and count of the old one no longer apply.
     std::error_code ignored;
     fs::remove(WarmMarkerPath(compute_path), ignored);
+    fs::remove(WarmMarkerPath(WarmVariantPath(compute_path, ShaderCacheV2::PrecompiledShaderStamp)),
+               ignored);
     fs::remove(WarmCountPath(compute_path), ignored);
     fs::rename(compute_tmp, compute_path, ec);
     if (ec) {
