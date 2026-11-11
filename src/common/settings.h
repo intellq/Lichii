@@ -749,11 +749,6 @@ struct Values {
                                                           true,
                                                           true,
                                                           &oot_high_refresh};
-    // Which revision of the Frizti tuned settings (common/frizti_settings.h) this config has had
-    // applied once (MainWindow::MigrateFriztiSettings; config/frizti.ini keeps it too).
-    Setting<u32> frizti_settings_revision{linkage, 0, "frizti_settings_revision",
-                                          Category::RendererAdvanced};
-
     // Mario Kart World: select a fixed or dynamic in-game frame-rate mode (loader/nso.cpp).
     SwitchableSetting<bool> mkw_30fps{linkage, false, "mkw_30fps", Category::RendererAdvanced};
     SwitchableSetting<bool> mkw_dynamic_fps{linkage, false, "mkw_dynamic_fps",
