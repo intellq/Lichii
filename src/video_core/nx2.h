@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cstdlib>
 #include <functional>
 #include <map>
@@ -20,7 +19,6 @@
 
 #include "common/bit_util.h"
 #include "common/common_types.h"
-#include "common/thread.h"
 
 namespace Tegra {
 
@@ -479,50 +477,6 @@ inline u64 Nx2SemaphoreMirror(u64 address) {
     return Nx2IsSemaphoreRegion((address & ~u64{0xfff}) - 0x1000) ? address - 0x1000 : 0;
 }
 
-/// Wakes the GPU thread while it waits for suspended channels (gpu_thread.cpp). A new command
-/// (ThreadManager::PushCommand) or a GPU write that latches a waiter (Nx2SemaphoreWaiters::OnWrite)
-/// can let a channel go on. A guest CPU store to a semaphore sends nothing, and neither does the
-/// host GPU finishing a command list copy: the waiting thread polls for those.
-class Nx2PendingWake {
-public:
-    static Nx2PendingWake& Get() {
-        static Nx2PendingWake wake;
-        return wake;
-    }
-
-    void Notify() {
-        if (!woken.exchange(true, std::memory_order_seq_cst) &&
-            sleeping.load(std::memory_order_seq_cst)) {
-            event.Set();
-        }
-    }
-
-    /// Called before the waiter checks its channels: a Notify after it ends the next wait.
-    void Arm() {
-        woken.exchange(false, std::memory_order_acq_rel);
-    }
-
-    /// Waits in hardware (Common::WaitForFlag) until a Notify or the deadline; true if notified.
-    bool Poll(std::chrono::steady_clock::time_point deadline) {
-        return Common::WaitForFlag(woken, deadline);
-    }
-
-    /// Blocks in the OS until a Notify, for at most `time`; true if notified.
-    bool Sleep(std::chrono::nanoseconds time) {
-        sleeping.store(true, std::memory_order_seq_cst);
-        if (!woken.load(std::memory_order_seq_cst)) {
-            event.SleepFor(time);
-        }
-        sleeping.store(false, std::memory_order_relaxed);
-        return woken.load(std::memory_order_acquire);
-    }
-
-private:
-    alignas(64) std::atomic<bool> woken{};
-    std::atomic<bool> sleeping{};
-    Common::Event event;
-};
-
 /// Channels suspended on a semaphore acquire. A console channel polls and sees every release;
 /// Eden writes releases in bursts when fences signal and resumes waiters only between command
 /// lists, so an acquire-equal could miss its value. Writes latch the waiters they satisfy.
@@ -600,19 +554,12 @@ public:
         if (count.load(std::memory_order_acquire) == 0) {
             return;
         }
-        bool latched = false;
-        {
-            std::scoped_lock lk{mutex};
-            for (Slot& slot : slots) {
-                if (slot.owner.load(std::memory_order_relaxed) != nullptr &&
-                    slot.address == device_address && Matches(slot, value)) {
-                    slot.latched.store(true, std::memory_order_release);
-                    latched = true;
-                }
+        std::scoped_lock lk{mutex};
+        for (Slot& slot : slots) {
+            if (slot.owner.load(std::memory_order_relaxed) != nullptr &&
+                slot.address == device_address && Matches(slot, value)) {
+                slot.latched.store(true, std::memory_order_release);
             }
-        }
-        if (latched) {
-            Nx2PendingWake::Get().Notify();
         }
     }
 
