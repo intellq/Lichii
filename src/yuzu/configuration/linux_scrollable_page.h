@@ -43,10 +43,13 @@ public:
                 return false;
             }
             const auto* wheel = static_cast<QWheelEvent*>(event);
-            const bool vertical = wheel->angleDelta().y() || wheel->pixelDelta().y();
-            const bool horizontal = wheel->angleDelta().x() || wheel->pixelDelta().x();
-            if ((!vertical || scroll->verticalScrollBar()->maximum() == 0) &&
-                (!horizontal || scroll->horizontalScrollBar()->maximum() == 0)) {
+            // QAbstractScrollArea::wheelEvent sends the event to one bar only, chosen by the
+            // dominant angle delta, so leave the event alone when that bar cannot move.
+            const QPoint angle = wheel->angleDelta();
+            const QScrollBar* bar = qAbs(angle.x()) > qAbs(angle.y())
+                                        ? scroll->horizontalScrollBar()
+                                        : scroll->verticalScrollBar();
+            if (bar->minimum() == bar->maximum()) {
                 return false;
             }
             const QPointF position = target->mapTo(scroll->viewport(), wheel->position());
