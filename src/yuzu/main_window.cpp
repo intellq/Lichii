@@ -55,6 +55,7 @@
 #include "yuzu/shader_warm_dialog.h"
 #include "yuzu/fritchii/saves_window.h"
 #include "yuzu/user_data_migration.h"
+#include "yuzu/whats_new_dialog.h"
 #include "video_core/shader_warm/shader_warm_builder.h"
 #ifdef LICHII_NX_TOOLS
 #include "core/file_sys/registered_cache.h"
@@ -179,6 +180,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/romfs.h"
 #include "core/file_sys/savedata_factory.h"
+#include "core/loader/nx.h"
 
 #include "core/tools/renderdoc.h"
 
@@ -362,11 +364,13 @@ const int MainWindow::max_recent_files_item;
 
 namespace {
 
-constexpr std::array<std::pair<u32, const char*>, 5> default_game_icon_sizes{
+constexpr std::array<std::pair<u32, const char*>, 7> default_game_icon_sizes{
     std::make_pair(0, QT_TRANSLATE_NOOP("MainWindow", "None")),
     std::make_pair(32, QT_TRANSLATE_NOOP("MainWindow", "Small (32x32)")),
+    std::make_pair(44, QT_TRANSLATE_NOOP("MainWindow", "Medium (44x44)")),
     std::make_pair(64, QT_TRANSLATE_NOOP("MainWindow", "Standard (64x64)")),
     std::make_pair(128, QT_TRANSLATE_NOOP("MainWindow", "Large (128x128)")),
+    std::make_pair(160, QT_TRANSLATE_NOOP("MainWindow", "Cover (160x160)")),
     std::make_pair(256, QT_TRANSLATE_NOOP("MainWindow", "Full Size (256x256)")),
 };
 
@@ -424,6 +428,15 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     QIcon::setFallbackSearchPaths(QStringList(QStringLiteral(":/icons")));
 
     default_theme_paths = QIcon::themeSearchPaths();
+
+    // The first launch after an interface update switches to Lichii Dark and explains what moved.
+    const bool whats_new_pending =
+        UISettings::values.whats_new_version.GetValue() < WhatsNewDialog::Version;
+    if (whats_new_pending) {
+        UISettings::values.whats_new_version = WhatsNewDialog::Version;
+        UISettings::values.theme =
+            UISettings::themes[static_cast<size_t>(UISettings::Theme::LichiiDark)].second;
+    }
     UpdateUITheme();
 
     SetDiscordEnabled(UISettings::values.enable_discord_presence.GetValue());
@@ -475,6 +488,11 @@ MainWindow::MainWindow(bool has_broken_vulkan)
         Core::Crypto::KeyManager::Instance().ReloadKeys();
     }
     game_list->PopulateAsync(UISettings::values.game_dirs);
+
+    if (whats_new_pending && !UISettings::values.first_start.GetValue() &&
+        UISettings::values.show_whats_new.GetValue()) {
+        QTimer::singleShot(0, this, &MainWindow::OnWhatsNew);
+    }
 
     // Set up game list mode checkboxes.
     SetGameListMode(UISettings::values.game_list_mode.GetValue());
@@ -1647,19 +1665,14 @@ void MainWindow::ConnectMenuEvents() {
     game_size_actions->setExclusive(true);
 
     for (size_t i = 0; i < default_game_icon_sizes.size(); i++) {
-        const auto current_size = UISettings::values.game_icon_size.GetValue();
         const auto size = default_game_icon_sizes[i].first;
         QAction* action = ui->menuGame_Icon_Size->addAction(GetTranslatedGameIconSize(i));
         action->setCheckable(true);
-
-        if (current_size == size)
-            action->setChecked(true);
-
         game_size_actions->addAction(action);
 
         connect(action, &QAction::triggered, this, [this, size](bool checked) {
             if (checked) {
-                UISettings::values.game_icon_size.SetValue(size);
+                UISettings::CurrentGameIconSize().SetValue(size);
                 CheckIconSize();
 
                 game_list->UpdateIconSizes();
@@ -1738,6 +1751,7 @@ void MainWindow::ConnectMenuEvents() {
     connect_menu(ui->action_Firmware_From_Folder, &MainWindow::OnInstallFirmware);
     connect_menu(ui->action_Firmware_From_ZIP, &MainWindow::OnInstallFirmwareFromZIP);
     connect_menu(ui->action_Install_Keys, &MainWindow::OnInstallDecryptionKeys);
+    connect_menu(ui->action_Whats_New, &MainWindow::OnWhatsNew);
     connect_menu(ui->action_About, &MainWindow::OnAbout);
     connect_menu(ui->action_Eden_Dependencies, &MainWindow::OnEdenDependencies);
     connect_menu(ui->action_Apply_Recommended_Settings, &MainWindow::OnApplyRecommendedSettings);
@@ -2960,33 +2974,49 @@ void MainWindow::OnGameListDumpRomFS(u64 program_id, const std::string& game_pat
         return;
     }
 
-    FileSys::VirtualFile packed_update_raw{};
-    loader->ReadUpdateRaw(packed_update_raw);
-
     const auto& installed = QtCommon::system->GetContentProvider();
 
     u64 title_id{};
-    u8 raw_type{};
-    if (!SelectRomFSDumpTarget(installed, program_id, &title_id, &raw_type)) {
-        failed();
-        return;
+    FileSys::VirtualFile romfs;
+    if (loader->GetFileType() == Loader::FileType::NX) {
+        // An NX archive is never installed: it gives its own RomFS, update applied.
+        Loader::AppLoader_NX nx_loader{*QtCommon::system,
+                                       QtCommon::vfs->OpenFile(game_path, FileSys::OpenMode::Read),
+                                       program_id};
+        title_id = program_id;
+        if (nx_loader.ReadPatchedRomFS(romfs) != Loader::ResultStatus::Success) {
+            failed();
+            return;
+        }
+    } else {
+        FileSys::VirtualFile packed_update_raw{};
+        loader->ReadUpdateRaw(packed_update_raw);
+
+        u8 raw_type{};
+        if (!SelectRomFSDumpTarget(installed, program_id, &title_id, &raw_type)) {
+            failed();
+            return;
+        }
+
+        const auto type = static_cast<FileSys::ContentRecordType>(raw_type);
+        const auto base_nca = installed.GetEntry(title_id, type);
+        if (!base_nca) {
+            failed();
+            return;
+        }
+
+        const FileSys::NCA update_nca{packed_update_raw, nullptr};
+        if (type != FileSys::ContentRecordType::Program ||
+            update_nca.GetStatus() != Loader::ResultStatus::ErrorMissingBKTRBaseRomFS ||
+            update_nca.GetTitleId() != FileSys::GetUpdateTitleID(title_id)) {
+            packed_update_raw = {};
+        }
+
+        const FileSys::PatchManager pm{title_id, QtCommon::system->GetFileSystemController(),
+                                       installed};
+        romfs = pm.PatchRomFS(base_nca.get(), base_nca->GetRomFS(), type, packed_update_raw, false);
     }
 
-    const auto type = static_cast<FileSys::ContentRecordType>(raw_type);
-    const auto base_nca = installed.GetEntry(title_id, type);
-    if (!base_nca) {
-        failed();
-        return;
-    }
-
-    const FileSys::NCA update_nca{packed_update_raw, nullptr};
-    if (type != FileSys::ContentRecordType::Program ||
-        update_nca.GetStatus() != Loader::ResultStatus::ErrorMissingBKTRBaseRomFS ||
-        update_nca.GetTitleId() != FileSys::GetUpdateTitleID(title_id)) {
-        packed_update_raw = {};
-    }
-
-    const auto base_romfs = base_nca->GetRomFS();
     const auto dump_dir =
         target == DumpRomFSTarget::Normal
             ? Common::FS::GetEdenPath(Common::FS::EdenPath::DumpDir)
@@ -2994,10 +3024,6 @@ void MainWindow::OnGameListDumpRomFS(u64 program_id, const std::string& game_pat
     const auto romfs_dir = fmt::format("{:016X}/romfs", title_id);
 
     const auto path = Common::FS::PathToUTF8String(dump_dir / romfs_dir);
-
-    const FileSys::PatchManager pm{title_id, QtCommon::system->GetFileSystemController(),
-                                   installed};
-    auto romfs = pm.PatchRomFS(base_nca.get(), base_romfs, type, packed_update_raw, false);
 
     const auto out = VfsFilesystemCreateDirectoryWrapper(path, FileSys::OpenMode::ReadWrite);
 
@@ -4035,30 +4061,25 @@ void MainWindow::SetCarouselView() {
 }
 
 void MainWindow::CheckIconSize() {
+    auto& setting = UISettings::CurrentGameIconSize();
+
     // When in grid/carousel view mode, with text off
     // there is no point in having icons turned off
-    auto actions = game_size_actions->actions();
-    if (UISettings::values.game_list_mode.GetValue() != Settings::GameListMode::TreeView &&
-        !UISettings::values.show_game_name.GetValue()) {
-        u32 newSize = UISettings::values.game_icon_size.GetValue();
-        if (newSize == 0) {
-            newSize = 64;
-            UISettings::values.game_icon_size.SetValue(newSize);
-        }
-
-        // Then disable the "none" action and update that menu.
-        for (size_t i = 0; i < default_game_icon_sizes.size(); i++) {
-            const auto current_size = newSize;
-            const auto size = default_game_icon_sizes[i].first;
-            if (current_size == size)
-                actions.at(i)->setChecked(true);
-        }
-
-        // Update this if you add anything before None.
-        actions.at(0)->setEnabled(false);
-    } else {
-        actions.at(0)->setEnabled(true);
+    const bool icons_required =
+        UISettings::values.game_list_mode.GetValue() != Settings::GameListMode::TreeView &&
+        !UISettings::values.show_game_name.GetValue();
+    if (icons_required && setting.GetValue() == 0) {
+        setting.SetValue(setting.GetDefault());
     }
+
+    auto actions = game_size_actions->actions();
+    for (size_t i = 0; i < default_game_icon_sizes.size(); i++) {
+        if (setting.GetValue() == default_game_icon_sizes[i].first)
+            actions.at(i)->setChecked(true);
+    }
+
+    // Update this if you add anything before None.
+    actions.at(0)->setEnabled(!icons_required);
 }
 
 void MainWindow::ToggleShowGameName() {
@@ -4535,6 +4556,14 @@ void MainWindow::OnInstallDecryptionKeys() {
 
     game_list->PopulateAsync(UISettings::values.game_dirs);
     OnCheckFirmwareDecryption();
+}
+
+void MainWindow::OnWhatsNew() {
+    WhatsNewDialog dialog(this);
+    dialog.exec();
+    if (dialog.OpenConfigureRequested()) {
+        OnConfigure();
+    }
 }
 
 void MainWindow::OnAbout() {
@@ -6185,7 +6214,9 @@ void MainWindow::filterBarSetChecked(bool state) {
 static void AdjustLinkColor() {
     QPalette new_pal(qApp->palette());
 
-    if (UISettings::IsDarkTheme())
+    if (UISettings::values.theme == "lichii")
+        new_pal.setColor(QPalette::Link, QColor(0xf4, 0x5a, 0x85));
+    else if (UISettings::IsDarkTheme())
         new_pal.setColor(QPalette::Link, QColor(0, 190, 255, 255));
     else
         new_pal.setColor(QPalette::Link, QColor(0, 140, 200, 255));
@@ -6194,12 +6225,119 @@ static void AdjustLinkColor() {
         qApp->setPalette(new_pal);
 }
 
+// Lichii Dark styles most widgets through its stylesheet; the palette covers what Qt draws
+// without one: item view text, disabled text, links and the native parts of dialogs.
+static QPalette LichiiPalette() {
+    QPalette palette;
+    const QColor window(0x17, 0x18, 0x1b);
+    const QColor surface(0x20, 0x21, 0x25);
+    const QColor text(0xec, 0xec, 0xef);
+    const QColor disabled(0x55, 0x57, 0x5d);
+    const QColor accent(0xf0, 0x38, 0x6b);
+    palette.setColor(QPalette::Window, window);
+    palette.setColor(QPalette::WindowText, text);
+    palette.setColor(QPalette::Base, window);
+    palette.setColor(QPalette::AlternateBase, QColor(0x1b, 0x1c, 0x20));
+    palette.setColor(QPalette::ToolTipBase, QColor(0x23, 0x24, 0x29));
+    palette.setColor(QPalette::ToolTipText, text);
+    palette.setColor(QPalette::PlaceholderText, QColor(0x6f, 0x71, 0x78));
+    palette.setColor(QPalette::Text, text);
+    palette.setColor(QPalette::Button, surface);
+    palette.setColor(QPalette::ButtonText, text);
+    palette.setColor(QPalette::BrightText, Qt::white);
+    palette.setColor(QPalette::Light, QColor(0x34, 0x36, 0x3c));
+    palette.setColor(QPalette::Midlight, QColor(0x2a, 0x2c, 0x31));
+    palette.setColor(QPalette::Mid, QColor(0x23, 0x24, 0x29));
+    palette.setColor(QPalette::Dark, QColor(0x14, 0x15, 0x18));
+    palette.setColor(QPalette::Shadow, Qt::black);
+    palette.setColor(QPalette::Highlight, accent);
+    palette.setColor(QPalette::HighlightedText, Qt::white);
+    palette.setColor(QPalette::Link, QColor(0xf4, 0x5a, 0x85));
+    palette.setColor(QPalette::LinkVisited, QColor(0xd4, 0x2c, 0x5a));
+    palette.setColor(QPalette::Disabled, QPalette::WindowText, disabled);
+    palette.setColor(QPalette::Disabled, QPalette::Text, disabled);
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText, disabled);
+    return palette;
+}
+
+void MainWindow::UpdateMenuIcons() {
+    const std::array<std::pair<QAction*, const char*>, 55> icons{{
+        {ui->action_Install_File_NAND, "download"},
+        {ui->action_Load_File, "file"},
+        {ui->action_Load_Folder, "folder"},
+        {ui->menu_recent_files->menuAction(), "clock"},
+        {ui->action_Load_Amiibo, "star"},
+        {ui->menuOpen_Eden_Folders->menuAction(), "folder"},
+        {ui->action_Exit, "x"},
+        {ui->action_Root_Data_Folder, "folder"},
+        {ui->action_NAND_Folder, "hdd"},
+        {ui->action_SDMC_Folder, "sd"},
+        {ui->action_Mod_Folder, "puzzle"},
+        {ui->action_Log_Folder, "list"},
+        {ui->action_Pause, "pause"},
+        {ui->action_Stop, "stop"},
+        {ui->action_Restart, "restart"},
+        {ui->action_Configure, "sliders"},
+        {ui->action_Configure_Current_Game, "gamepad"},
+        {ui->action_Post_Processing_Shaders, "wand"},
+        {ui->menu_Reset_Window_Size->menuAction(), "monitor"},
+        {ui->menu_View_Debugging->menuAction(), "bug"},
+        {ui->menu_Game_List_Mode->menuAction(), "grid"},
+        {ui->menuGame_Icon_Size->menuAction(), "image"},
+        {ui->action_View_Lobby, "globe"},
+        {ui->action_Start_Room, "plus"},
+        {ui->action_Connect_To_Room, "users"},
+        {ui->action_Show_Room, "dot"},
+        {ui->action_Leave_Room, "x"},
+        {ui->action_Install_Keys, "key"},
+        {ui->menuInstall_Firmware->menuAction(), "cpu"},
+        {ui->action_Firmware_From_Folder, "folder"},
+        {ui->action_Firmware_From_ZIP, "archive"},
+        {ui->action_Verify_installed_contents, "check"},
+        {ui->action_Data_Manager, "hdd"},
+        {ui->menu_cabinet_applet->menuAction(), "star"},
+        {ui->menu_Applets->menuAction(), "apps"},
+        {ui->menu_Create_Shortcuts->menuAction(), "share"},
+        {ui->action_Desktop, "monitor"},
+        {ui->action_Application_Menu, "apps"},
+        {ui->action_Capture_Screenshot, "image"},
+        {ui->menuTAS->menuAction(), "play"},
+        {ui->action_TAS_Start, "play"},
+        {ui->action_TAS_Record, "record"},
+        {ui->action_TAS_Reset, "restart"},
+        {ui->action_Configure_Tas, "sliders"},
+        {ui->action_Launch_QLaunch, "apps"},
+        {ui->action_Launch_MiiEdit, "user"},
+        {ui->action_Launch_Controller, "gamepad"},
+        {ui->action_Launch_PhotoViewer, "image"},
+        {ui->action_Open_Mods_Page, "puzzle"},
+        {ui->action_Open_UserHandbook, "help"},
+        {ui->action_Apply_Recommended_Settings, "wand"},
+        {ui->action_Restore_Previous_Settings, "restart"},
+        {ui->action_Whats_New, "sparkles"},
+        {ui->action_About, "info"},
+        {ui->action_Eden_Dependencies, "list"},
+    }};
+    for (const auto& [action, name] : icons) {
+        action->setIcon(MenuIcon(name));
+    }
+}
+
 void MainWindow::UpdateUITheme() {
     const QString default_theme = QString::fromUtf8(UISettings::themes[size_t(UISettings::default_theme)].second);
     QString current_theme = QString::fromStdString(UISettings::values.theme);
 
     if (current_theme.isEmpty())
         current_theme = default_theme;
+
+    static bool lichii_palette = false;
+    if (current_theme == QStringLiteral("lichii")) {
+        qApp->setPalette(LichiiPalette());
+        lichii_palette = true;
+    } else if (lichii_palette) {
+        qApp->setPalette(QPalette());
+        lichii_palette = false;
+    }
 
 #ifdef _WIN32
     QIcon::setThemeName(current_theme);
@@ -6240,6 +6378,8 @@ void MainWindow::UpdateUITheme() {
         qApp->setStyleSheet({});
         setStyleSheet({});
     }
+
+    UpdateMenuIcons();
 
 #ifdef _WIN32
     RemoveTitlebarFilter();

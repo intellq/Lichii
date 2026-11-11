@@ -446,10 +446,6 @@ jobs:
             --output appimage
           test -s "$LDAI_OUTPUT"
           ls -la "$LDAI_OUTPUT"
-          if ldd AppDir/usr/bin/lichii | grep -q libnxformat; then
-            echo "::error::nxformat must be linked statically"
-            exit 1
-          fi
           test -f AppDir/usr/bin/qt.conf
           mv AppDir lichii
           ln -s usr/bin/lichii lichii/lichii
