@@ -36,7 +36,6 @@
 #include "yuzu/configuration/configuration_shared.h"
 #include "yuzu/configuration/configure_graphics.h"
 #include "yuzu/configuration/amd_fsr4_panel.h"
-#include "yuzu/configuration/linux_scrollable_page.h"
 #include "yuzu/configuration/nvidia_dlss_panel.h"
 #include "yuzu/configuration/shared_widget.h"
 
@@ -59,10 +58,6 @@ ConfigureGraphics::ConfigureGraphics(
     RetrieveVulkanDevices();
 
     ui->setupUi(this);
-
-#if defined(__linux__) && !defined(__ANDROID__)
-    ConfigurationShared::MakePageScrollable(this);
-#endif
 
     Setup(builder);
 

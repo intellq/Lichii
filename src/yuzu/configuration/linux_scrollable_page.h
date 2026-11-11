@@ -23,6 +23,9 @@ inline QScrollArea* CreateScrollArea(QWidget* content, QWidget* parent) {
 }
 
 inline void MakePageScrollable(QWidget* page) {
+    if (!page || !page->layout() || qobject_cast<QScrollArea*>(page)) {
+        return;
+    }
     auto* content = new QWidget;
     content->setLayout(page->layout());
     auto* scroll = CreateScrollArea(content, page);
