@@ -380,6 +380,8 @@ TEST_CASE("Another import preserves the completed profile and its earlier backup
     RunImport(f.MakePlan());
     REQUIRE(GetState(f.state) == State::Complete);
     REQUIRE(Backups(f.destination).size() == 1);
+    // Completion may have been recorded just before the pending marker was removed.
+    Write(f.state / "pending", "");
     PrepareAnotherImport(f.state);
     REQUIRE(GetState(f.state) == State::Unresolved);
     CHECK(Read(f.destination / "save") == "first source");

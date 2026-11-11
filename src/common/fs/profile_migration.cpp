@@ -380,6 +380,7 @@ void PrepareAnotherImport(const fs::path& state_dir) {
     fs::remove(state_dir / "journal");
     fs::remove(state_dir / "journal.tmp");
     RemoveMarkers(state_dir);
+    fs::remove(state_dir / "pending");
     fs::remove(state_dir / "fresh");
     fs::remove(state_dir / "complete");
 }
