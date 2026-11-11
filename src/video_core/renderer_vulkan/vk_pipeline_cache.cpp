@@ -2974,6 +2974,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreatePrecompiledGraphicsPipeli
             (*recorded)[i].Deserialize(precompiled_file,
                                        static_cast<std::streamoff>(offset + size));
         }
+        std::vector<u8> bytes;
         for (size_t stage = 0; stage < infos.size(); ++stage) {
             if (record.infos[stage] == NoInfo) {
                 continue;
