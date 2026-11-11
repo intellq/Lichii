@@ -2,11 +2,13 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cwctype>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #ifndef SI_NO_CONVERSION
 #define SI_NO_CONVERSION 1
 #endif
@@ -49,10 +51,61 @@ bool NeedsLegacyProfileImport() {
 #endif
 }
 
+void RequestProfileImport(const std::string& folder) {
+    const auto state = ProfileImportStateDirectory();
+    fs::create_directories(state);
+    std::ofstream file{state / "import-request", std::ios::trunc};
+    file << folder;
+    file.close();
+    if (!file) {
+        throw std::runtime_error("Could not write the import request");
+    }
+}
+
+void CancelProfileImportRequest() {
+    std::error_code ec;
+    fs::remove(ProfileImportStateDirectory() / "import-request", ec);
+}
+
+std::string TakeProfileImportRequest() {
+#ifdef __ANDROID__
+    return {};
+#else
+    const auto state = ProfileImportStateDirectory();
+    const auto request = state / "import-request";
+    std::error_code ec;
+    if (!fs::exists(request, ec)) {
+        return {};
+    }
+    std::string text;
+    {
+        std::ifstream file{request};
+        text.assign(std::istreambuf_iterator<char>{file}, {});
+    }
+    fs::remove(request, ec);
+    // The first line names the folder; v5.8.2 adds what to copy on the next lines.
+    const std::string folder = text.substr(0, text.find('\n'));
+    constexpr std::array known{"eden", "fritchii", "fritchii-portable", "superbuild-portable", "yuzu", "suyu", "sudachi", "citron"};
+    if (std::ranges::find(known, folder) == known.end()) {
+        return {};
+    }
+    // The Fritchii that asked is closing: let it finish writing its config first.
+    std::this_thread::sleep_for(std::chrono::seconds{2});
+    if (Migration::GetState(state) == Migration::State::Pending) {
+        Migration::Recover(state);
+    }
+    // Forget the earlier import's outcome (its lock file stays) so RunImport runs again.
+    for (const char* name : {"complete", "fresh"}) {
+        fs::remove(state / name, ec);
+    }
+    return text;
+#endif
+}
+
 void CheckLegacyProfileBeforeConfig() {
     if (NeedsLegacyProfileImport()) {
         throw std::runtime_error("Legacy emulator data or an unfinished import was found. "
-                                 "Open the Lichii GUI to import it or explicitly start fresh "
+                                 "Open the Lichii window to import it or explicitly start fresh "
                                  "before using eden-cli. No configuration was created.");
     }
 }

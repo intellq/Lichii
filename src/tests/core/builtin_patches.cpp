@@ -62,11 +62,11 @@ constexpr size_t UnlockStateSize = 0xA8;
 constexpr size_t SoundEntryOffset = sizeof(Loader::NSOHeader) + 0x415300;
 constexpr size_t SoundStepOffset = sizeof(Loader::NSOHeader) + 0x415334;
 constexpr size_t SoundGateOffset = sizeof(Loader::NSOHeader) + 0x3C46800;
-constexpr size_t SoundFeedOffset = sizeof(Loader::NSOHeader) + 0x3C46280;
+constexpr size_t SoundFeedOffset = sizeof(Loader::NSOHeader) + 0x3C46A00;
 constexpr u32 SoundEntryOriginalInstruction = 0xD503237F; // pacibsp
 constexpr u32 SoundEntryBranchInstruction = 0x14E0C540;   // b main+0x3C46800
 constexpr u32 SoundStepOriginalInstruction = 0xBD401100;  // ldr s0, [x8, #0x10]
-constexpr u32 SoundStepCallInstruction = 0x94E0C3D3;      // bl main+0x3C46280
+constexpr u32 SoundStepCallInstruction = 0x94E0C5B3;      // bl main+0x3C46A00
 constexpr std::string_view SoundGate =
     "D09200B010823A9102030035C9810090294944F9290140F9301140BD11102E1E0022311EAA010054"
     "120240BD522A301E4022311ECB000054523A311E120200BD29008052090600B90A000014120200BD"
@@ -609,6 +609,10 @@ TEST_CASE("High refresh rate built-in replaces Dark's routine only while its set
         const auto patched = context.Manager().PatchNSO(nso, "main");
         REQUIRE(std::equal(DynamicCall.begin(), DynamicCall.end(), patched.begin() + CallOffset));
         REQUIRE(word_at(patched, BaseRoutine + 0x7C) == 0x40C00000);
+        REQUIRE(word_at(patched, SoundEntryOffset) == SoundEntryBranchInstruction);
+        REQUIRE(word_at(patched, SoundStepOffset) == SoundStepCallInstruction);
+        REQUIRE(word_at(patched, SoundGateOffset) != 0);
+        REQUIRE(word_at(patched, SoundFeedOffset) != 0);
         for (size_t offset = 0; offset < 0x110; offset += 4) {
             REQUIRE(word_at(patched, Routine + offset) == 0);
         }
@@ -622,6 +626,10 @@ TEST_CASE("High refresh rate built-in replaces Dark's routine only while its set
         const auto patched = context.Manager().PatchNSO(nso, "main");
         REQUIRE(std::equal(HighCall.begin(), HighCall.end(), patched.begin() + CallOffset));
         REQUIRE(word_at(patched, BaseRoutine + 0x7C) == 0x40C00000);
+        REQUIRE(word_at(patched, SoundEntryOffset) == SoundEntryBranchInstruction);
+        REQUIRE(word_at(patched, SoundStepOffset) == SoundStepCallInstruction);
+        REQUIRE(word_at(patched, SoundGateOffset) != 0);
+        REQUIRE(word_at(patched, SoundFeedOffset) != 0);
         REQUIRE(word_at(patched, Routine + 0x18) == 0xB40002CC); // cbz x12, +0x70 (Dark's)
         REQUIRE(word_at(patched, Routine + 0x6C) == 0x14000002); // b +0x74
         REQUIRE(word_at(patched, Routine + 0x70) == 0xD65F03C0); // ret

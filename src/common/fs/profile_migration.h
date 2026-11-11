@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <vector>
 
 namespace Common::FS::ProfileMigration {
@@ -15,6 +16,9 @@ enum class State { Unresolved, Pending, Complete, Fresh };
 struct Root {
     std::filesystem::path source;
     std::filesystem::path destination;
+    /// This root's strategy, else the plan's (Fritchii: copy most roots, link a big nand or
+    /// sdmc when the copy would not fit).
+    std::optional<Strategy> strategy{};
 };
 
 using LinkFunction =

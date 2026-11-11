@@ -230,6 +230,7 @@ add_executable(yuzu
     util/icon_search.h
 
     user_data_migration.h user_data_migration.cpp
+    fritchii/saves_window.h fritchii/saves_window.cpp
 
     yuzu.qrc
     yuzu.rc

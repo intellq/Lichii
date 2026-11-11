@@ -10,6 +10,7 @@
 
 #define EDEN_DIR "lichii"
 #define EDEN_LEGACY_DIR "eden"
+#define FRITCHII_DIR "fritchii"
 #define PORTABLE_DIR "user"
 
 // Sub-directories contained within a yuzu data directory

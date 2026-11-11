@@ -152,7 +152,7 @@ constexpr std::array<u8, 84> WATER_STEPS_ROUTINE{
 constexpr std::array<u8, 4> SOUND_ENTRY_ORIGINAL{0x7F, 0x23, 0x03, 0xD5}; // pacibsp
 constexpr std::array<u8, 4> SOUND_ENTRY_BRANCH{0x40, 0xC5, 0xE0, 0x14};   // b main+0x3C46800
 constexpr std::array<u8, 4> SOUND_STEP_ORIGINAL{0x00, 0x11, 0x40, 0xBD};  // ldr s0, [x8, #0x10]
-constexpr std::array<u8, 4> SOUND_STEP_CALL{0xD3, 0xC3, 0xE0, 0x94};      // bl main+0x3C46280
+constexpr std::array<u8, 4> SOUND_STEP_CALL{0xB3, 0xC5, 0xE0, 0x94};      // bl main+0x3C46A00
 // adrp x16, state ; add x16, x16, #0xea0 ; cbnz w2, other ; adrp x9, time ; ldr x9, [x9, #0x890] ;
 // ldr x9, [x9] ; ldr s16, [x9, #0x10] ; fmov s17, #1.0 ; fcmp s16, s17 ; b.ge every_frame ;
 // ldr s18, [x16] ; fadd s18, s18, s16 ; fcmp s18, s17 ; b.lt wait ; fsub s18, s18, s17 ;
@@ -191,7 +191,7 @@ constexpr std::array FPS_UNLOCK_RECORDS{
     BuiltinPatchRecord{0x415300, SOUND_ENTRY_BRANCH, SOUND_ENTRY_ORIGINAL},
     BuiltinPatchRecord{0x415334, SOUND_STEP_CALL, SOUND_STEP_ORIGINAL},
     BuiltinPatchRecord{0x3C46800, SOUND_GATE, {}, true},
-    BuiltinPatchRecord{0x3C46280, SOUND_FEED, {}, true},
+    BuiltinPatchRecord{0x3C46A00, SOUND_FEED, {}, true},
 };
 
 // High refresh rate (experimental, Settings oot_high_refresh): Dark's routine with the tail of
@@ -250,7 +250,7 @@ constexpr std::array HIGH_REFRESH_RECORDS{
     BuiltinPatchRecord{0x415300, SOUND_ENTRY_BRANCH, SOUND_ENTRY_ORIGINAL},
     BuiltinPatchRecord{0x415334, SOUND_STEP_CALL, SOUND_STEP_ORIGINAL},
     BuiltinPatchRecord{0x3C46800, SOUND_GATE, {}, true},
-    BuiltinPatchRecord{0x3C46280, SOUND_FEED, {}, true},
+    BuiltinPatchRecord{0x3C46A00, SOUND_FEED, {}, true},
 };
 constexpr std::string_view DYNAMIC_FPS_NAME = "Dynamic FPS by Dark (built-in)";
 constexpr std::string_view HIGH_REFRESH_NAME = "High refresh rate (built-in, experimental)";

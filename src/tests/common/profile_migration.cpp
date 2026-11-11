@@ -348,6 +348,30 @@ TEST_CASE("Link never invokes source-mutating preparation", "[profile_migration]
     CHECK(GetState(f.state) == State::Complete);
 }
 
+TEST_CASE("Per-root strategies copy settings and link large data without replacing originals",
+          "[profile_migration]") {
+    Fixture f;
+    const auto nand = f.base / "old-nand";
+    const auto new_nand = f.base / "new-nand";
+    Write(f.source / "settings.ini", "legacy");
+    Write(f.destination / "settings.ini", "current");
+    Write(nand / "save", "game data");
+    auto plan = f.MakePlan();
+    plan.roots.push_back({nand, new_nand, Strategy::Link});
+    RunImport(plan, [&](const auto& staged) {
+        REQUIRE(staged.size() == 2);
+        CHECK_FALSE(Common::FS::IsSymlink(staged[0].destination));
+        CHECK(Common::FS::IsSymlink(staged[1].destination));
+        Write(staged[0].destination / "settings.ini", "remapped");
+    });
+    CHECK(Read(f.source / "settings.ini") == "legacy");
+    CHECK(Read(f.destination / "settings.ini") == "remapped");
+    CHECK(Read(nand / "save") == "game data");
+    CHECK(Common::FS::IsSymlink(new_nand));
+    REQUIRE(Backups(f.destination).size() == 1);
+    CHECK(Read(Backups(f.destination)[0] / "settings.ini") == "current");
+}
+
 TEST_CASE("Failed preparation keeps both originals and offers recovery", "[profile_migration]") {
     Fixture f;
     Write(f.source / "save", "legacy");

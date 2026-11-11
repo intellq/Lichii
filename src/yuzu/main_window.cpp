@@ -9,6 +9,9 @@
 #endif
 
 #include <QSysInfo>
+#include <QApplication>
+#include <QMessageBox>
+#include <QProcess>
 #include <atomic>
 #include <future>
 #include <stop_token>
@@ -17,6 +20,7 @@
 #include "common/settings.h"
 #include "common/settings_enums.h"
 #include "frontend_common/settings_generator.h"
+#include "frontend_common/profile_import.h"
 #include "render/performance_overlay.h"
 #ifdef HAS_RESHADE
 #include "configuration/configure_post_processing.h"
@@ -49,6 +53,8 @@
 #include "yuzu/nup_dialogs.h"
 #include "yuzu/recommended_settings_dialog.h"
 #include "yuzu/shader_warm_dialog.h"
+#include "yuzu/fritchii/saves_window.h"
+#include "yuzu/user_data_migration.h"
 #include "video_core/shader_warm/shader_warm_builder.h"
 #ifdef LICHII_NX_TOOLS
 #include "core/file_sys/registered_cache.h"
@@ -1729,6 +1735,42 @@ void MainWindow::ConnectMenuEvents() {
             !Settings::values.recommended_settings_backup.GetValue().empty());
     });
     connect_menu(ui->action_Data_Manager, &MainWindow::OnDataDialog);
+
+    auto* fritchii_discord = ui->menu_Help->addAction(tr("Fritchii Discord"));
+    connect(fritchii_discord, &QAction::triggered, this, [] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://discord.gg/fritchii")));
+    });
+    auto* fritchii_donate = ui->menu_Help->addAction(tr("Support Fritchii"));
+    connect(fritchii_donate, &QAction::triggered, this, [] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://paypal.me/frizti")));
+    });
+
+    auto* saves_action = ui->menu_Help->addAction(tr("Saves..."));
+    connect(saves_action, &QAction::triggered, this, [this] {
+        FritchiiUi::ShowSavesWindow(this, [this] { return emulation_running; });
+    });
+    auto* copy_data_action = ui->menu_Help->addAction(tr("Copy data from another emulator..."));
+    connect(ui->menu_Help, &QMenu::aboutToShow, copy_data_action,
+            [this, copy_data_action] { copy_data_action->setEnabled(!emulation_running); });
+    connect(copy_data_action, &QAction::triggered, this, [this] {
+        const auto choice = UserDataMigrator::AskImport(this, true);
+        if (!choice) {
+            return;
+        }
+        try {
+            FrontendCommon::RequestProfileImport(choice->Serialize());
+        } catch (const std::exception& error) {
+            QMessageBox::warning(this, tr("Copy data"), QString::fromUtf8(error.what()));
+            return;
+        }
+        const auto restart = connect(qApp, &QCoreApplication::aboutToQuit, qApp, [] {
+            QProcess::startDetached(QCoreApplication::applicationFilePath(), {});
+        });
+        if (!close()) {
+            disconnect(restart);
+            FrontendCommon::CancelProfileImportRequest();
+        }
+    });
 
 #if defined(ENABLE_UPDATE_CHECKER) && (defined(__linux__) || defined(_WIN32))
     auto* restore_action = ui->menu_Help->addAction(tr("Restore Previous Version..."));

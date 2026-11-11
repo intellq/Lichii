@@ -98,6 +98,31 @@ TEST_CASE("A 40-bit address space maps Switch 2 VA past 128 GiB", "[memory_manag
     REQUIRE(memory.GpuToCpuAddress(last_page) == last_dev);
 }
 
+TEST_CASE("GPU translations follow remapping and are isolated per address space", "[memory_manager]") {
+    ScopedSystemTestContext context;
+    Core::System system;
+    Core::DeviceMemory physical;
+    Tegra::MaxwellDeviceMemoryManager device_memory{physical};
+    NullRasterizer rasterizer;
+    Tegra::MemoryManager first{system, device_memory, 32, 1ULL << 34, 16};
+    Tegra::MemoryManager second{system, device_memory, 32, 1ULL << 34, 16};
+    first.BindRasterizer(&rasterizer);
+    second.BindRasterizer(&rasterizer);
+    constexpr GPUVAddr gpu = 0x100000;
+    constexpr u64 page_size = 0x1000;
+    first.Map(gpu, 0x2000, page_size, Tegra::PTEKind::PITCH, false);
+    second.Map(gpu, 0x4000, page_size, Tegra::PTEKind::PITCH, false);
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(first.GpuToCpuAddress(gpu + 7) == 0x2007);
+        REQUIRE(second.GpuToCpuAddress(gpu + 7) == 0x4007);
+    }
+    first.Unmap(gpu, page_size);
+    REQUIRE_FALSE(first.GpuToCpuAddress(gpu).has_value());
+    first.Map(gpu, 0x6000, page_size, Tegra::PTEKind::PITCH, false);
+    REQUIRE(first.GpuToCpuAddress(gpu + 7) == 0x6007);
+    REQUIRE(second.GpuToCpuAddress(gpu + 7) == 0x4007);
+}
+
 TEST_CASE("MaxContinuousRange from the mapping runs matches the page walk", "[memory_manager]") {
     const u64 big_page_bits = GENERATE(16ULL, 17ULL);
     CAPTURE(big_page_bits);

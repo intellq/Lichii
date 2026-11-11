@@ -133,7 +133,8 @@ std::vector<Root> Validate(const Plan& plan) {
         CheckTree(root.source);
         const auto destination = Absolute(root.destination);
         Root normalized{fs::weakly_canonical(Absolute(root.source)),
-                        fs::weakly_canonical(destination.parent_path()) / destination.filename()};
+                        fs::weakly_canonical(destination.parent_path()) / destination.filename(),
+                        root.strategy};
         if (Overlaps(normalized.source, fs::weakly_canonical(destination))) {
             throw std::runtime_error("Migration source and destination must not overlap");
         }
@@ -395,10 +396,15 @@ void RunImport(const Plan& plan, const Prepare& prepare) {
     }
     WriteJournal(plan.state_dir, entries);
     std::vector<Root> staged;
+    const auto strategy_of = [&](const Entry& entry) {
+        return entry.root.strategy.value_or(plan.strategy);
+    };
+    const bool any_copy = std::ranges::any_of(
+        entries, [&](const Entry& entry) { return strategy_of(entry) != Strategy::Link; });
     try {
         for (const auto& entry : entries) {
             fs::create_directories(entry.stage.parent_path());
-            if (plan.strategy == Strategy::Link) {
+            if (strategy_of(entry) == Strategy::Link) {
                 const bool linked = plan.create_link
                                         ? plan.create_link(entry.root.source, entry.stage)
                                         : Common::FS::CreateSymlink(entry.root.source, entry.stage);
@@ -412,7 +418,7 @@ void RunImport(const Plan& plan, const Prepare& prepare) {
             }
             staged.push_back({entry.root.source, entry.stage});
         }
-        if (prepare && plan.strategy != Strategy::Link) {
+        if (prepare && any_copy) {
             prepare(staged);
         }
         for (const auto& entry : entries) {
@@ -435,8 +441,8 @@ void RunImport(const Plan& plan, const Prepare& prepare) {
         }
         fs::rename(entry.stage, entry.root.destination);
     }
-    if (plan.strategy == Strategy::Move) {
-        for (const auto& entry : entries) {
+    for (const auto& entry : entries) {
+        if (strategy_of(entry) == Strategy::Move) {
             fs::rename(entry.root.source, entry.source_backup);
         }
     }
