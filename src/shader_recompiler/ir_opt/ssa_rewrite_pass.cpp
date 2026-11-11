@@ -20,6 +20,7 @@
 #include <map>
 #include <span>
 #include "common/container/unordered_map.h"
+#include "common/hash.h"
 #include <variant>
 #include <vector>
 
@@ -29,17 +30,25 @@
 #include "shader_recompiler/frontend/ir/reg.h"
 #include "shader_recompiler/frontend/ir/value.h"
 #include "shader_recompiler/ir_opt/passes.h"
-#include "shader_recompiler/translate_profile.h"
 
 namespace Shader::Optimization {
 namespace {
 struct FlagTag {
     auto operator<=>(const FlagTag&) const noexcept = default;
 };
-struct ZeroFlagTag : FlagTag {};
-struct SignFlagTag : FlagTag {};
-struct CarryFlagTag : FlagTag {};
-struct OverflowFlagTag : FlagTag {};
+// Flags and the indirect branch variable name the block slot that stores their definitions.
+struct ZeroFlagTag : FlagTag {
+    static constexpr auto slot{IR::Block::SsaVariable::ZeroFlag};
+};
+struct SignFlagTag : FlagTag {
+    static constexpr auto slot{IR::Block::SsaVariable::SignFlag};
+};
+struct CarryFlagTag : FlagTag {
+    static constexpr auto slot{IR::Block::SsaVariable::CarryFlag};
+};
+struct OverflowFlagTag : FlagTag {
+    static constexpr auto slot{IR::Block::SsaVariable::OverflowFlag};
+};
 
 struct GotoVariable : FlagTag {
     GotoVariable() = default;
@@ -52,23 +61,16 @@ struct GotoVariable : FlagTag {
 
 struct IndirectBranchVariable {
     auto operator<=>(const IndirectBranchVariable&) const noexcept = default;
+
+    static constexpr auto slot{IR::Block::SsaVariable::IndirectBranch};
 };
 
 using Variant = std::variant<IR::Reg, IR::Pred, ZeroFlagTag, SignFlagTag, CarryFlagTag, OverflowFlagTag, GotoVariable, IndirectBranchVariable>;
-// TODO: majority of these require stable iterators, test with XC beforehand
-using ValueMap = std::unordered_map<IR::Block*, IR::Value>;
 
-// Registers, predicates, flags and the indirect branch target are stored in the blocks
-// (IR::Block::SsaRegValue, SsaOtherValue); goto variables, which few programs have, in maps.
-// A per-block map for each predicate and flag was a hash lookup (and an insertion on a miss)
-// for every read of one.
-constexpr size_t ZeroFlagSlot = IR::NUM_USER_PREDS;
-constexpr size_t SignFlagSlot = ZeroFlagSlot + 1;
-constexpr size_t CarryFlagSlot = ZeroFlagSlot + 2;
-constexpr size_t OverflowFlagSlot = ZeroFlagSlot + 3;
-constexpr size_t IndirectBranchSlot = ZeroFlagSlot + 4;
-static_assert(IndirectBranchSlot < IR::Block::NumSsaOtherValues);
-
+// Every read walks back through blocks and looks up or writes a definition in each. Fixed-count
+// variables keep their definitions in the blocks: node-based maps per variable made those lookups
+// and their allocations a large part of the pass. Definitions are copied out as soon as they are
+// read, so the goto table needs no stable references.
 struct DefTable {
     const IR::Value& Def(IR::Block* block, IR::Reg variable) {
         return block->SsaRegValue(variable);
@@ -78,56 +80,33 @@ struct DefTable {
     }
 
     const IR::Value& Def(IR::Block* block, IR::Pred variable) {
-        return block->SsaOtherValue(IR::PredIndex(variable));
+        return block->SsaPredValue(variable);
     }
     void SetDef(IR::Block* block, IR::Pred variable, const IR::Value& value) {
-        block->SetSsaOtherValue(IR::PredIndex(variable), value);
+        block->SetSsaPredValue(variable, value);
     }
 
     const IR::Value& Def(IR::Block* block, GotoVariable variable) {
-        return goto_vars[variable.index][block];
+        const auto it{goto_vars.find({block, variable.index})};
+        return it != goto_vars.end() ? it->second : empty;
     }
     void SetDef(IR::Block* block, GotoVariable variable, const IR::Value& value) {
-        goto_vars[variable.index].insert_or_assign(block, value);
+        goto_vars.insert_or_assign({block, variable.index}, value);
     }
 
-    const IR::Value& Def(IR::Block* block, IndirectBranchVariable) {
-        return block->SsaOtherValue(IndirectBranchSlot);
+    template <typename Tag>
+        requires requires { Tag::slot; }
+    const IR::Value& Def(IR::Block* block, Tag) {
+        return block->SsaValue(Tag::slot);
     }
-    void SetDef(IR::Block* block, IndirectBranchVariable, const IR::Value& value) {
-        block->SetSsaOtherValue(IndirectBranchSlot, value);
-    }
-
-    const IR::Value& Def(IR::Block* block, ZeroFlagTag) {
-        return block->SsaOtherValue(ZeroFlagSlot);
-    }
-    void SetDef(IR::Block* block, ZeroFlagTag, const IR::Value& value) {
-        block->SetSsaOtherValue(ZeroFlagSlot, value);
+    template <typename Tag>
+        requires requires { Tag::slot; }
+    void SetDef(IR::Block* block, Tag, const IR::Value& value) {
+        block->SetSsaValue(Tag::slot, value);
     }
 
-    const IR::Value& Def(IR::Block* block, SignFlagTag) {
-        return block->SsaOtherValue(SignFlagSlot);
-    }
-    void SetDef(IR::Block* block, SignFlagTag, const IR::Value& value) {
-        block->SetSsaOtherValue(SignFlagSlot, value);
-    }
-
-    const IR::Value& Def(IR::Block* block, CarryFlagTag) {
-        return block->SsaOtherValue(CarryFlagSlot);
-    }
-    void SetDef(IR::Block* block, CarryFlagTag, const IR::Value& value) {
-        block->SetSsaOtherValue(CarryFlagSlot, value);
-    }
-
-    const IR::Value& Def(IR::Block* block, OverflowFlagTag) {
-        return block->SsaOtherValue(OverflowFlagSlot);
-    }
-    void SetDef(IR::Block* block, OverflowFlagTag, const IR::Value& value) {
-        block->SetSsaOtherValue(OverflowFlagSlot, value);
-    }
-
-    // TODO: Requires stable iterators
-    std::unordered_map<u32, ValueMap> goto_vars;
+    Common::unordered_map<std::pair<IR::Block*, u32>, IR::Value, Common::PairHash> goto_vars;
+    const IR::Value empty{};
 };
 
 IR::Opcode UndefOpcode(IR::Reg) noexcept {
@@ -153,6 +132,7 @@ enum class Status {
     PushPhiArgument,
 };
 
+template <typename Type>
 struct ReadState {
     ReadState(IR::Block* block_) : block{block_} {}
     ReadState() = default;
@@ -174,14 +154,11 @@ public:
 
     template <typename Type>
     IR::Value ReadVariable(Type variable, IR::Block* root_block) {
-        // One stack for every read: allocating one per read was a heap allocation for each
-        // register a program reads. ReadVariable never runs inside another ReadVariable (phi
-        // removal writes, it doesn't read), so the stack is free at entry.
         // TODO: Windows commits sodoku if you use small_vector
-        auto& stack{read_stack};
-        stack.clear();
-        stack.emplace_back(nullptr);
-        stack.emplace_back(root_block);
+        std::vector<ReadState<Type>> stack{
+            ReadState<Type>(nullptr),
+            ReadState<Type>(root_block),
+        };
         const auto prepare_phi_operand{[&] {
             if (stack.back().pred_it == stack.back().pred_end) {
                 IR::Inst* const phi{stack.back().phi};
@@ -311,7 +288,6 @@ private:
     // TODO: Windows dies with stack exhaustion?
     std::unordered_map<IR::Block*, std::map<Variant, IR::Inst*>> incomplete_phis;
     DefTable current_def;
-    std::vector<ReadState> read_stack;
 };
 
 void VisitInst(Pass& pass, IR::Block* block, IR::Inst& inst) {
@@ -378,13 +354,9 @@ void VisitInst(Pass& pass, IR::Block* block, IR::Inst& inst) {
 }
 
 void VisitBlock(Pass& pass, IR::Block* block) {
-    {
-        TranslateProfile::Scope scope{TranslateProfile::Step::SsaVisit};
-        for (IR::Inst& inst : block->Instructions()) {
-            VisitInst(pass, block, inst);
-        }
+    for (IR::Inst& inst : block->Instructions()) {
+        VisitInst(pass, block, inst);
     }
-    TranslateProfile::Scope scope{TranslateProfile::Step::SsaSeal};
     pass.SealBlock(block);
 }
 
@@ -415,7 +387,6 @@ void SsaRewritePass(IR::Program& program) {
     for (auto block = program.post_order_blocks.rbegin(); block != end; ++block) {
         VisitBlock(pass, *block);
     }
-    TranslateProfile::Scope scope{TranslateProfile::Step::SsaFinal};
     for (auto block = program.post_order_blocks.rbegin(); block != end; ++block) {
         for (IR::Inst& inst : (*block)->Instructions()) {
             if (inst.GetOpcode() == IR::Opcode::Phi) {
