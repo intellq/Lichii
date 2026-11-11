@@ -1444,7 +1444,7 @@ void MainWindow::RestoreUIState() {
     ui->action_Single_Window_Mode->setChecked(UISettings::values.single_window_mode.GetValue());
     ToggleWindowMode();
 
-    ui->action_Fullscreen->setChecked(UISettings::values.fullscreen.GetValue());
+    ui->action_Fullscreen->setChecked(false);
 
     ui->action_Enable_Overlay_Applet->setChecked(Settings::values.enable_overlay.GetValue());
 
@@ -5661,7 +5661,7 @@ void MainWindow::UpdateStatusButtons() {
 
 // TODO(crueter): Use this for game list stuff
 void MainWindow::UpdateUISettings() {
-    if (!ui->action_Fullscreen->isChecked()) {
+    if (!emulation_running || !ui->action_Fullscreen->isChecked()) {
         UISettings::values.geometry = saveGeometry();
         UISettings::values.renderwindow_geometry = render_window->saveGeometry();
     }
