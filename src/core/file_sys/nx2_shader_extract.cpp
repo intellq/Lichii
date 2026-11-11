@@ -4,6 +4,7 @@
 #include "core/file_sys/nx2_shader_extract.h"
 
 #include <algorithm>
+#include <numeric>
 #include <array>
 #include <cstring>
 #include <memory>
@@ -899,6 +900,11 @@ Result Extract(std::span<const VirtualDir> roots, unsigned threads, Progress* pr
     };
     std::unordered_map<u64, Seen> seen;
     std::unordered_map<std::string, size_t> variation_index;
+    // Where each program and variation was first found in the earliest file holding it: (file,
+    // occurrence in the file). The workers find them in whatever order their files finish; the
+    // result is put in this order after, so every run gives the same one.
+    std::vector<std::pair<size_t, size_t>> program_rank;
+    std::vector<std::pair<size_t, size_t>> variation_rank;
 
     const unsigned count =
         threads ? threads : std::max(1u, std::thread::hardware_concurrency());
@@ -909,25 +915,30 @@ Result Extract(std::span<const VirtualDir> roots, unsigned threads, Progress* pr
     turns.serial_reads = serial_reads;
     const auto work = [&](unsigned worker) {
         size_t current = 0;
+        size_t occurrence = 0; ///< programs found so far in the current file
         Walker walker(
             zstd,
             [&](Stage stage, Bytes control, Bytes code, std::string origin, std::string variation) {
                 // Only the control bytes a fingerprint covers matter to the program; keep them all
                 // (the translator reads up to the section's own length).
                 const u64 fp = Fingerprint(control, code);
+                const std::pair<size_t, size_t> rank{current, occurrence++};
                 std::scoped_lock lock{mutex};
                 auto [it, inserted] = seen.try_emplace(fp, Seen{0, current});
                 if (inserted) {
                     it->second.index = static_cast<u32>(result.programs.size());
                     result.programs.push_back({stage, fp, {control.begin(), control.end()},
                                                {code.begin(), code.end()}, origin});
+                    program_rank.push_back(rank);
                 } else if (current < it->second.file) {
                     it->second.file = current;
                     result.programs[it->second.index].origin = origin;
+                    program_rank[it->second.index] = rank;
                 }
                 auto [v, added] = variation_index.try_emplace(variation, result.variations.size());
                 if (added) {
                     result.variations.push_back({std::move(variation), {}});
+                    variation_rank.push_back(rank);
                 }
                 auto& members = result.variations[v->second].programs;
                 if (std::find(members.begin(), members.end(), it->second.index) == members.end()) {
@@ -940,6 +951,7 @@ Result Extract(std::span<const VirtualDir> roots, unsigned threads, Progress* pr
             if (current >= files.size()) {
                 break;
             }
+            occurrence = 0;
             try {
                 walker.File(files[current].file, files[current].path);
             } catch (const std::exception& e) {
@@ -955,6 +967,35 @@ Result Extract(std::span<const VirtualDir> roots, unsigned threads, Progress* pr
         for (unsigned i = 0; i < count; ++i) {
             pool.emplace_back(work, i);
         }
+    }
+    // Programs and variations in the order they are first found in file order.
+    {
+        std::vector<u32> order(result.programs.size());
+        std::iota(order.begin(), order.end(), 0U);
+        std::ranges::sort(order, [&](u32 a, u32 b) { return program_rank[a] < program_rank[b]; });
+        std::vector<u32> new_index(order.size());
+        std::vector<Program> programs;
+        programs.reserve(order.size());
+        for (u32 i = 0; i < order.size(); ++i) {
+            new_index[order[i]] = i;
+            programs.push_back(std::move(result.programs[order[i]]));
+        }
+        result.programs = std::move(programs);
+        std::vector<size_t> variation_order(result.variations.size());
+        std::iota(variation_order.begin(), variation_order.end(), size_t{0});
+        std::ranges::sort(variation_order, [&](size_t a, size_t b) {
+            return variation_rank[a] < variation_rank[b];
+        });
+        std::vector<Variation> variations;
+        variations.reserve(variation_order.size());
+        for (const size_t i : variation_order) {
+            auto& variation = result.variations[i];
+            for (u32& member : variation.programs) {
+                member = new_index[member];
+            }
+            variations.push_back(std::move(variation));
+        }
+        result.variations = std::move(variations);
     }
     for (unsigned i = 0; i < count; ++i) {
         result.errors.insert(result.errors.end(), errors[i].begin(), errors[i].end());
