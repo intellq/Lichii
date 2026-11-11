@@ -1096,6 +1096,17 @@ void MainWindow::InitializeWidgets() {
             });
     statusBar()->insertPermanentWidget(0, frame_gen_status_button);
 
+    // Shows which upscaler draws in place of the game's own; the settings themselves only take
+    // effect when a game starts.
+    upscaler_status_button = new QPushButton();
+    upscaler_status_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
+    upscaler_status_button->setFocusPolicy(Qt::NoFocus);
+    upscaler_status_button->setCheckable(true);
+    connect(upscaler_status_button, &QPushButton::clicked, this,
+            [this] { UpdateUpscalerButton(); });
+    UpdateUpscalerButton();
+    statusBar()->insertPermanentWidget(0, upscaler_status_button);
+
 #ifdef HAS_RESHADE
     post_shader_status_button = new QPushButton();
     post_shader_status_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
@@ -2370,6 +2381,9 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     frame_gen_state = VideoCore::FrameGenState::Pending;
     frame_gen_frames = 0;
     frame_gen_generating = false;
+    upscaler_evaluations = VideoCore::LastUpscale().evaluations;
+    upscaler_running = false;
+    upscaler_fallback_reason = nullptr;
     frame_gen_fps = 0.0;
     frame_gen_fps_timer.invalidate();
     refresh_button->setDisabled(true);
@@ -5437,6 +5451,16 @@ void MainWindow::UpdateStatusBar() {
     dlss_evaluations = dlss.evaluations;
     dlss_status_label->setText(dlss_status_text);
     dlss_status_label->setVisible(!dlss_status_text.isEmpty());
+    const auto upscaler = QtCommon::system->GPU().Renderer().GetUpscalerStatus();
+    upscaler_running = upscaler.evaluations > upscaler_evaluations;
+    upscaler_evaluations = upscaler.evaluations;
+    upscaler_kind = upscaler.kind;
+    dlss_available = upscaler.dlss_available;
+    upscaler_render_width = upscaler.render_width;
+    upscaler_render_height = upscaler.render_height;
+    upscaler_output_width = upscaler.output_width;
+    upscaler_output_height = upscaler.output_height;
+    upscaler_fallback_reason = upscaler.fallback_reason;
 
     emit statsUpdated(results, shader_notify);
 
@@ -5472,6 +5496,7 @@ void MainWindow::UpdateStatusBar() {
     emu_frametime_label->setText(tr("Frame: %1 ms").arg(results.frametime * 1000.0, 0, 'f', 2));
 
     UpdateFrameGenButton();
+    UpdateUpscalerButton();
 
     res_scale_label->setVisible(true);
     emu_speed_label->setVisible(!Settings::values.use_multi_core.GetValue());
@@ -5693,6 +5718,72 @@ void MainWindow::UpdateFrameGenButton() {
             .arg(target_met));
 }
 
+void MainWindow::UpdateUpscalerButton() {
+    const bool dlss = Settings::values.nvidia_dlss.GetValue();
+    const bool fsr = Settings::values.ocarina_fsr.GetValue();
+    const QString sizes = tr("%1x%2 to %3x%4")
+                              .arg(upscaler_render_width)
+                              .arg(upscaler_render_height)
+                              .arg(upscaler_output_width)
+                              .arg(upscaler_output_height);
+    if (emulation_running && upscaler_running && upscaler_output_width != 0) {
+        upscaler_status_button->setChecked(true);
+        if (upscaler_kind == VideoCore::UpscalerKind::Dlss) {
+            upscaler_status_button->setText(tr("DLSS"));
+            upscaler_status_button->setToolTip(
+                tr("NVIDIA DLSS draws in place of the game's upscaler: %1.").arg(sizes));
+            return;
+        }
+        const bool fsr4 = upscaler_kind == VideoCore::UpscalerKind::Fsr4;
+        upscaler_status_button->setText(fsr4 ? tr("FSR 4") : tr("FSR 3.1"));
+        upscaler_status_button->setToolTip(
+            (fsr4 ? tr("AMD FSR 4 draws in place of the game's upscaler: %1.")
+                  : tr("AMD FSR 3.1 draws in place of the game's upscaler: %1."))
+                .arg(sizes));
+        return;
+    }
+    if (!dlss && !fsr) {
+        upscaler_status_button->setChecked(false);
+        upscaler_status_button->setText(tr("GAME UPSCALER"));
+        upscaler_status_button->setToolTip(
+            tr("The game's own upscaler draws. NVIDIA DLSS and AMD FSR 3.1 (Ocarina of Time) "
+               "can replace it: they are turned on in the graphics settings and take effect "
+               "when a game starts."));
+        return;
+    }
+    // NVIDIA DLSS comes first; AMD FSR 3.1 takes over when it can't run.
+    const bool wants_dlss = dlss && (dlss_available || !emulation_running || !fsr);
+    if (!emulation_running) {
+        upscaler_status_button->setChecked(true);
+        upscaler_status_button->setText(wants_dlss ? tr("DLSS") : tr("FSR 3.1"));
+        upscaler_status_button->setToolTip(
+            wants_dlss ? tr("NVIDIA DLSS is on. Whether it runs shows here once a game starts.")
+                       : tr("AMD FSR 3.1 is on for Ocarina of Time. Whether it runs shows here "
+                            "once the game starts."));
+        return;
+    }
+    upscaler_status_button->setChecked(false);
+    if (wants_dlss && !dlss_available) {
+        upscaler_status_button->setText(tr("DLSS UNAVAILABLE"));
+        upscaler_status_button->setToolTip(
+            tr("NVIDIA DLSS is on but can't run. It needs the Vulkan renderer, a GeForce RTX "
+               "card and NVIDIA's files: see the graphics settings."));
+        return;
+    }
+    const QString name = wants_dlss ? tr("NVIDIA DLSS") : tr("AMD FSR 3.1");
+    upscaler_status_button->setText(wants_dlss ? tr("DLSS (IDLE)") : tr("FSR 3.1 (IDLE)"));
+    if (upscaler_fallback_reason != nullptr) {
+        upscaler_status_button->setToolTip(
+            tr("%1 is on but the game's own upscaler is drawing: %2.")
+                .arg(name, QString::fromLatin1(upscaler_fallback_reason)));
+        return;
+    }
+    upscaler_status_button->setToolTip(
+        tr("%1 is on but replaced no upscaler in the last half second: this game or this scene "
+           "has none it can replace.")
+            .arg(name));
+}
+
 void MainWindow::UpdateVolumeUI() {
     const auto volume_value = static_cast<int>(Settings::values.volume.GetValue());
     volume_slider->setValue(volume_value);
@@ -5714,6 +5805,7 @@ void MainWindow::UpdateStatusButtons() {
     UpdateFilterText();
     UpdateAAText();
     UpdateFrameGenButton();
+    UpdateUpscalerButton();
     UpdateVolumeUI();
 }
 

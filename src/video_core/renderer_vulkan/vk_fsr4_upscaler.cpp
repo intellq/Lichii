@@ -16,6 +16,7 @@
 #include "common/settings.h"
 #include "video_core/renderer_vulkan/vk_fsr4_upscaler.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/upscaler_status.h"
 #include "video_core/vulkan_common/ffx_runtime.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
@@ -397,6 +398,9 @@ bool Fsr4Upscaler::Upscale(const Inputs& in) {
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, {}, {}, back);
     });
+    VideoCore::NoteUpscale(VideoCore::UpscalerKind::Fsr4, in.render_size.width,
+                           in.render_size.height, in.upscale_size.width,
+                           in.upscale_size.height);
     return true;
 }
 

@@ -18,6 +18,7 @@
 #include "core/frontend/framebuffer_layout.h"
 #include "video_core/gpu.h"
 #include "video_core/rasterizer_interface.h"
+#include "video_core/upscaler_status.h"
 
 namespace Core::Frontend {
 class EmuWindow;
@@ -99,6 +100,11 @@ public:
     /// Host GPU busy time of the last sampled frame, nullopt when it isn't measured
     [[nodiscard]] virtual std::optional<double> GetGpuBusyMs() const {
         return std::nullopt;
+    }
+
+    /// The upscaler that replaces the game's own, what it last drew and how often so far
+    [[nodiscard]] virtual UpscalerStatus GetUpscalerStatus() const {
+        return LastUpscale();
     }
 
     [[nodiscard]] const RendererDeviceInfo& GetDeviceInfo() const {

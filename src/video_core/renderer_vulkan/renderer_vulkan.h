@@ -59,6 +59,8 @@ public:
         return device.GetDriverName();
     }
 
+    [[nodiscard]] VideoCore::UpscalerStatus GetUpscalerStatus() const override;
+
     [[nodiscard]] VideoCore::FrameGenStatus GetFrameGenStatus() const override {
 #ifdef HAS_LSFG
         return frame_gen.CurrentStatus();

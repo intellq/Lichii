@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <optional>
 #include <string_view>
 
@@ -87,6 +88,12 @@ private:
 class RasterizerVulkan final : public VideoCore::RasterizerInterface,
                                protected VideoCommon::ChannelSetupCaches<VideoCommon::ChannelInfo> {
 public:
+    /// Why Ocarina of Time's own upscale drew the last frame instead of the temporal upscaler
+    /// (a literal), or null while the upscaler replaces it or for other games.
+    [[nodiscard]] const char* OcarinaFallbackReason() const noexcept {
+        return oot_fallback_reason.load(std::memory_order_relaxed);
+    }
+
     explicit RasterizerVulkan(Core::Frontend::EmuWindow& emu_window_, Tegra::GPU& gpu_,
                               Tegra::MaxwellDeviceMemoryManager& device_memory_,
                               const Device& device_, MemoryAllocator& memory_allocator_,
@@ -313,7 +320,7 @@ private:
     } oot_motion;
     std::unique_ptr<class OcarinaUpscaler> oot_live_dlss;
     bool oot_live_failed{};
-    const char* oot_fallback_reason{};
+    std::atomic<const char*> oot_fallback_reason{}; ///< also read by the status bar
     u32 oot_fallback_repeats{};
     std::optional<u64> oot_dlss_frame;
     std::array<f32, 2> oot_jitter_applied{}; ///< in the viewport state now (render pixels)

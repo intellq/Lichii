@@ -146,6 +146,7 @@ add_library(video_core STATIC
     rasterizer_interface.h
     renderer_base.cpp
     renderer_base.h
+    upscaler_status.h
 
     # Null
     renderer_null/null_rasterizer.cpp

@@ -248,6 +248,15 @@ RendererVulkan::~RendererVulkan() {
     void(device.GetLogical().WaitIdle());
 }
 
+VideoCore::UpscalerStatus RendererVulkan::GetUpscalerStatus() const {
+    auto status = VideoCore::LastUpscale();
+#ifdef EGLANTINE_STREAMLINE
+    status.dlss_available = Streamline::IsDlssAvailable();
+#endif
+    status.fallback_reason = rasterizer.OcarinaFallbackReason();
+    return status;
+}
+
 void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebuffers) {
     const bool trace = Common::DkbFrameTrace::Enabled();
     const auto entered = trace ? std::chrono::steady_clock::now()

@@ -79,6 +79,7 @@ class QtNXWebEngineView;
 
 namespace VideoCore {
 enum class FrameGenState : u8;
+enum class UpscalerKind : u8;
 class ShaderNotify;
 }
 namespace Core {
@@ -491,6 +492,7 @@ private:
     void UpdateAAText();
     void UpdatePostShaderText();
     void UpdateFrameGenButton();
+    void UpdateUpscalerButton();
     void UpdateVolumeUI();
     void UpdateStatusBar();
     void UpdateGPUAccuracyButton();
@@ -571,6 +573,16 @@ private:
     QPushButton* aa_status_button = nullptr;
     QPushButton* post_shader_status_button = nullptr;
     QPushButton* frame_gen_status_button = nullptr;
+    QPushButton* upscaler_status_button = nullptr;
+    VideoCore::UpscalerKind upscaler_kind{};
+    bool upscaler_running = false;
+    bool dlss_available = false;
+    u64 upscaler_evaluations = 0;
+    u32 upscaler_render_width = 0;
+    u32 upscaler_render_height = 0;
+    u32 upscaler_output_width = 0;
+    u32 upscaler_output_height = 0;
+    const char* upscaler_fallback_reason = nullptr;
     VideoCore::FrameGenState frame_gen_state{};
     u64 frame_gen_frames = 0;
     u64 dlss_evaluations = 0;
