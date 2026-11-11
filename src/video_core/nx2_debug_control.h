@@ -4,6 +4,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -18,7 +19,30 @@
 /// Without the server nothing is posted and the per-frame cost is one relaxed atomic load.
 namespace VideoCore::Nx2Debug {
 
-inline int Experiment(int id) { return id == 43 ? 2 : id == 58 ? 1 : 0; }
+// Experiments are read after nx2_switches.txt is loaded and require a restart to change.
+inline int Experiment(int id) {
+    const auto enabled = [](const char* name) {
+        const char* value = std::getenv(name);
+        return value != nullptr && std::atoi(value) != 0;
+    };
+    switch (id) {
+    case 43: return 2;
+    case 58: return 1;
+    case 48: {
+        static const bool value = enabled("EDEN_NX2_EXP48");
+        return value;
+    }
+    case 53: {
+        static const bool value = enabled("EDEN_NX2_EXP53");
+        return value;
+    }
+    case 63: {
+        static const bool value = enabled("EDEN_NX2_EXP63");
+        return value;
+    }
+    default: return 0;
+    }
+}
 struct CaptureRequest {
     u64 id;
     std::filesystem::path directory;

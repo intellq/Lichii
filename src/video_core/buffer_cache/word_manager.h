@@ -47,7 +47,7 @@ enum class Type {
 inline std::atomic<u32> g_hot_page_epoch{0};
 
 /// Eglantine f27522bfb9 (kraibse): back thread 14.5 -> 13.8 ms a frame in OoT, protect calls
-/// -71%. Fritchii: behind EDEN_NX2_EXP48 (live, default off) until a fight A/B and a flicker
+/// -71%. Fritchii: behind EDEN_NX2_EXP48 (default off; restart required) until a fight A/B and a flicker
 /// check: a hot page the CPU writes again after its upload in the same frame reaches the GPU
 /// one frame later. EDEN_NX2_HOT_PAGES=0 also turns it off.
 [[nodiscard]] inline bool HotPagesEnabled() {

@@ -282,19 +282,22 @@ std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr gpu_addr) const {
     };
     static constexpr size_t CacheSize = 2048;
     static thread_local std::array<CachedPage, CacheSize> cache{};
-    // Fritchii: EDEN_NX2_EXP63 (live, 0 = off) instead, so a fight session can flip it.
-    // The environment is read once: getenv takes the C runtime's lock, and this runs millions of
-    // times a second (a per-call getenv here made Castle Town run at 3 fps, 2026-11-10).
-    static const bool cache_allowed = std::getenv("EDEN_NX2_NO_TRANSLATION_CACHE") == nullptr;
-    const bool use_cache = cache_allowed && VideoCore::Nx2Debug::Experiment(63) != 0;
+    // Read switches once, after the frontend loads nx2_switches.txt. The default is off.
+    static const bool use_cache = std::getenv("EDEN_NX2_NO_TRANSLATION_CACHE") == nullptr &&
+                                  VideoCore::Nx2Debug::Experiment(63) != 0;
     constexpr u64 SubpageBits = 12;
     constexpr u64 SubpageMask = (u64{1} << SubpageBits) - 1;
-    const u64 owner_id = (u64{unique_identifier} << 1) | 1; // Never 0, the empty slot
-    const u64 page = gpu_addr >> SubpageBits;
-    const u64 serial = map_serial.load(std::memory_order_acquire);
-    CachedPage& slot = cache[(page ^ (page >> 11)) % CacheSize];
-    if (use_cache && slot.owner == owner_id && slot.page == page && slot.serial == serial) [[likely]] {
-        return slot.device_page + (gpu_addr & SubpageMask);
+    u64 owner_id{};
+    u64 page{};
+    u64 serial{};
+    if (use_cache) {
+        owner_id = (u64{unique_identifier} << 1) | 1;
+        page = gpu_addr >> SubpageBits;
+        serial = map_serial.load(std::memory_order_acquire);
+        const CachedPage& slot = cache[(page ^ (page >> 11)) % CacheSize];
+        if (slot.owner == owner_id && slot.page == page && slot.serial == serial) [[likely]] {
+            return slot.device_page + (gpu_addr & SubpageMask);
+        }
     }
     DAddr dev_addr;
     if (GetEntry(gpu_addr, true) != EntryType::Mapped) [[unlikely]] {
@@ -312,7 +315,8 @@ std::optional<DAddr> MemoryManager::GpuToCpuAddress(GPUVAddr gpu_addr) const {
         return std::nullopt;
     }
     if (use_cache) {
-        slot = CachedPage{owner_id, serial, page, dev_addr - (gpu_addr & SubpageMask)};
+        cache[(page ^ (page >> 11)) % CacheSize] =
+            CachedPage{owner_id, serial, page, dev_addr - (gpu_addr & SubpageMask)};
     }
     return dev_addr;
 }

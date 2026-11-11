@@ -1875,6 +1875,9 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
     namespace ShaderWarm = VideoCommon::ShaderWarm;
     const size_t graphics_jobs = jobs.size();
     const std::filesystem::path warm_file = ShaderWarm::ComputeWarmPath(title_id);
+    // Keep each translator's marker separate while sharing the input and Vulkan cache.
+    const auto warm_marker_file = warm_file.parent_path() /
+        fmt::format("warm-compute-{:#x}.bin", VideoCommon::ShaderCacheV2::PrecompiledShaderStamp);
     const std::string path = Common::FS::PathToUTF8String(warm_file);
     // Based on Lichii PR #1174: warm shaders again when their emitted variant changes.
     const auto& resolution = Settings::values.resolution_info;
@@ -1900,7 +1903,7 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
     bool compute_pending = false;
     std::error_code ec;
     const auto current = stamp(0);
-    const auto marker = ShaderWarm::ReadWarmMarker(warm_file);
+    const auto marker = ShaderWarm::ReadWarmMarker(warm_marker_file);
     if (!std::filesystem::exists(warm_file, ec)) {
         LOG_INFO(Render_Vulkan, "Shader precache: no precache file at {}", path);
     } else if (current && marker && marker->Matches(*current)) {
@@ -2035,7 +2038,7 @@ void PipelineCache::PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
     const size_t total_built = static_cast<size_t>(std::count(built.begin(), built.end(), u8{1}));
     if (compute_pending && !skipped) {
         if (const auto stamp_done = stamp(file_entries)) {
-            ShaderWarm::WriteWarmMarker(warm_file, *stamp_done);
+            ShaderWarm::WriteWarmMarker(warm_marker_file, *stamp_done);
         }
     }
     const size_t precached_before = precached.size();
@@ -2154,19 +2157,21 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
         return;
     }
     const auto modified = std::filesystem::last_write_time(path, error).time_since_epoch().count();
-    // The driver keeps what it compiled; the step runs again for another file, driver, build or
+    // The driver keeps what it compiled; the step runs again for another file, driver, translator or
     // shader settings: the resolution scale is folded into the shaders (RescalingPass), and the
     // bloom fix, loop safety checks and debug renderer change their translation or SPIR-V.
     const auto stamp_path =
-        base_dir / fmt::format("precompiled_prepared.fork-v{}.txt", CACHE_VERSION);
+        base_dir / fmt::format("precompiled_prepared.fork-v{}-shader-{:#x}.txt", CACHE_VERSION,
+                               VideoCommon::ShaderCacheV2::PrecompiledShaderStamp);
     const auto infos_path =
-        base_dir / fmt::format("precompiled_infos.fork-v{}.bin", CACHE_VERSION);
+        base_dir / fmt::format("precompiled_infos.fork-v{}-shader-{:#x}.bin", CACHE_VERSION,
+                               VideoCommon::ShaderCacheV2::PrecompiledShaderStamp);
     const auto& resolution = Settings::values.resolution_info;
     const bool radv_vulkan_cache =
         use_vulkan_pipeline_cache && device.GetDriverID() == VK_DRIVER_ID_MESA_RADV;
     const std::string stamp = fmt::format(
-        "{} {} {:#x} {} {} scale {} {}/{} bloom {} loops {} debug {}{} shader {:#x} table {} {}\n",
-        file_size, modified, device.GetDriverVersion(), Common::g_scm_rev, device.GetModelName(),
+        "{} {} {:#x} {} scale {} {}/{} bloom {} loops {} debug {}{} shader {:#x} table {} {}\n",
+        file_size, modified, device.GetDriverVersion(), device.GetModelName(),
         resolution.active, resolution.up_scale, resolution.down_shift,
         Settings::values.fix_bloom_effects.GetValue(),
         Settings::values.disable_shader_loop_safety_checks.GetValue(),

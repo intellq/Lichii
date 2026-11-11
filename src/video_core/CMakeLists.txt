@@ -546,6 +546,9 @@ list(APPEND precompiled_shader_sources
      video_core/native_lowering.cpp video_core/native_lowering.h video_core/mkw_wave_workaround.h
      video_core/shader_handle_program.h
      video_core/renderer_vulkan/pipeline_shader_emission.h
+     video_core/renderer_vulkan/fixed_pipeline_state.cpp
+     video_core/renderer_vulkan/fixed_pipeline_state.h
+     video_core/nx2_precompile.cpp video_core/nx2_precompile.h
      video_core/renderer_vulkan/vk_pipeline_cache.cpp
      video_core/renderer_vulkan/vk_graphics_pipeline.cpp
      video_core/renderer_vulkan/vk_compute_pipeline.cpp)
