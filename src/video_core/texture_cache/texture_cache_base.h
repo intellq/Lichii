@@ -922,6 +922,8 @@ private:
     /// True while FindRenderTargetView finds or creates the image a render target binds.
     bool creating_render_target = false;
     bool is_rescaling = false;
+    /// The bound depth target is wider than tall by padding only (see FindDepthBuffer).
+    bool depth_target_padded = false;
     u64 total_used_memory = 0;
     u64 minimum_memory;
     u64 expected_memory;
