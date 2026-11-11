@@ -58,7 +58,8 @@ Result IStorage::Read(
 
     // Read the data from the Storage backend
     const ReadTraceScope trace{ReadTraceSource::Storage, length};
-    const Common::Nx2Hitch::Scope timed{Common::Nx2Hitch::Cause::FileRead, length};
+    const Common::Nx2Hitch::Scope timed{Common::Nx2Hitch::Cause::FileRead,
+                                       static_cast<u64>(length)};
     backend->Read(out_bytes.data(), length, offset);
 
     R_SUCCEED();
