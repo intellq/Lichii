@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <condition_variable>
 #include <mutex>
+#include <new>
 
 #include "common/logging.h"
 #include "common/thread.h"
@@ -78,8 +79,21 @@ void DeviceMemory::TrimZeroPages(std::stop_token stop) {
             }
         }
         const auto start = std::chrono::steady_clock::now();
+        size_t resident = 0;
+        size_t trimmed = 0;
         Common::Nx2Hitch::ZeroTrimBegin();
-        const auto [resident, trimmed] = buffer.TrimZeroPages();
+        try {
+            const auto result = buffer.TrimZeroPages();
+            resident = result.first;
+            trimmed = result.second;
+        } catch (const std::bad_alloc&) {
+            Common::Nx2Hitch::ZeroTrimEnd();
+            // Optional working-set maintenance must not terminate the process when
+            // its temporary page lists cannot be allocated under host RAM pressure.
+            // Avoid allocating or formatting a log message on this low-memory path.
+            interval = 60s;
+            continue;
+        }
         Common::Nx2Hitch::ZeroTrimEnd();
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now() - start)
