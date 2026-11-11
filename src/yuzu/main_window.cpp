@@ -202,6 +202,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "video_core/nx2_recipe.h"
 #include "video_core/shader_cache_v2/cache.h"
 #include "video_core/shader_cache_v2/records.h"
+#include "video_core/shader_cache_v2/stale_variants.h"
 #include "video_core/pipeline_cache_files.h"
 #include "video_core/renderer_base.h"
 #include "video_core/shader_notify.h"
@@ -3283,17 +3284,11 @@ void WritePlayBuildState(u64 program_id, std::string_view kind, u64 recorded) {
 /// Recorded pipelines before the launch offers to build a precompiled file from them.
 constexpr u64 PlayBuildFirstThreshold = 1000;
 
-/// The shader records this build writes: the translator-specific log (seeded once from the shared
-/// one), or the shared log when this translator has none yet.
+/// The shader records this build writes, under their plain name. Files left with a stamp in their
+/// name by an older build are renamed or removed first, as on game start.
 std::filesystem::path RecordedShaderLog(const std::filesystem::path& title_dir) {
-    namespace CacheV2 = VideoCommon::ShaderCacheV2;
-    const auto variant =
-        title_dir / fmt::format("lichii-cache.v2-lowering-{:#x}.bin", CacheV2::LoweringStamp());
-    std::error_code error;
-    if (std::filesystem::file_size(variant, error) > 0 && !error) {
-        return variant;
-    }
-    return title_dir / CacheV2::FileName;
+    VideoCommon::ShaderCacheV2::NormalizeShaderFiles(title_dir);
+    return title_dir / VideoCommon::ShaderCacheV2::FileName;
 }
 } // Anonymous namespace
 
