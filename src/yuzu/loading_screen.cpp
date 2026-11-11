@@ -243,12 +243,12 @@ void LoadingScreen::ConfirmSkipRecipe() {
     // On the main window: the loading screen's style sheet would otherwise apply to the dialog.
     auto* const box = new QMessageBox(
         QMessageBox::Warning, tr("Skip Shader Preparation?"),
-        tr("The game will start right away, but expect noticeably worse shader compilation "
-           "stutter during gameplay, because shaders that aren't ready are compiled as they "
-           "appear.\n\nPreparation only needs to finish once. After that it runs again only "
-           "for a new emulator build, a GPU driver update, a different GPU or a new shader "
-           "recipe. If you skip it now, it will run again on the next launch.\n\nSkip it "
-           "anyway?"),
+        tr("The game will start right away and the rest is prepared in the background on a "
+           "few shader threads, which can take a long while. Until then, expect more shader "
+           "compilation stutter, because shaders that aren't ready are compiled as they "
+           "appear.\n\nWhat is already prepared is kept, and a later launch continues where "
+           "this one stops. Preparation runs again only for a new emulator build, a GPU driver "
+           "update, a different GPU or a new shader recipe.\n\nSkip it anyway?"),
         QMessageBox::Yes | QMessageBox::No, window());
     box->setDefaultButton(QMessageBox::No);
     box->setAttribute(Qt::WA_DeleteOnClose);

@@ -100,6 +100,15 @@ bool TakeSkipWarm();
 void RequestSkipRecipe();
 bool TakeSkipRecipe();
 
+/// Progress of the precompiled pipelines' preparation while the game runs, for the status bar:
+/// records done (prepared, failed or skipped) of `total`. Total 0: none is running.
+struct RecipeProgress {
+    u64 done{};
+    u64 total{};
+};
+void SetRecipeProgress(u64 done, u64 total);
+RecipeProgress GetRecipeProgress();
+
 /// The GPU driver, device and pipeline cache version pipelines were precached for.
 struct DriverStamp {
     u32 driver{};

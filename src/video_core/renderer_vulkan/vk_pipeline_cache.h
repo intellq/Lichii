@@ -43,6 +43,7 @@
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/shader_cache.h"
 #include "video_core/shader_cache_v2/cache.h"
+#include "video_core/precompiled_store.h"
 #include "video_core/shader_jobs.h"
 #include "video_core/shader_stage_translation.h"
 
@@ -288,17 +289,39 @@ private:
                          const VideoCore::DiskResourceLoadCallback& callback);
 
     /// Builds and drops every pipeline of the game's precompiled file (written offline by
-    /// tools/nx2-precompile), so the driver's own cache holds them before they are first drawn.
-    /// Draws never use these pipelines: they build their own from the guest's shaders and find the
-    /// driver's compiled code. Runs once per precompiled file, driver and emulator build.
-    void PreparePrecompiled(u64 title_id, const std::filesystem::path& base_dir, std::stop_token stop_loading,
+    /// tools/nx2-precompile), so the driver's own cache holds them before they are first drawn,
+    /// and keeps each one's shader infos and SPIR-V (VideoCommon::PrecompiledStore,
+    /// precompiled_kept*.fork-v<N>.bin) for CreatePrecompiledGraphicsPipeline. Runs once per
+    /// precompiled file, driver and emulator build: on the loading screen or in the background
+    /// (precompiled_prepare), continuing what an earlier launch left.
+    void PreparePrecompiled(u64 title_id, const std::filesystem::path& base_dir,
+                            std::stop_token stop_loading,
                             const VideoCore::DiskResourceLoadCallback& callback);
 
-    /// The shader infos and SPIR-V the preparation step kept for the precompiled pipelines
-    /// (precompiled_infos.fork-v<N>.bin, written for the file, driver and build of `stamp`), and
-    /// the precompiled file's environment index; false when there are none for this stamp.
-    bool LoadPrecompiledInfos(const std::filesystem::path& precompiled,
-                              const std::filesystem::path& infos, const std::string& stamp);
+    struct PrecompiledPrep;
+    enum class PrecompiledPrepOutcome {
+        Finished, ///< Every record prepared
+        Stopped,  ///< The load or the session stopped; a later launch continues
+        Skipped,  ///< Skipped from the loading screen; the background continues
+    };
+
+    /// Prepares the records of `prep` not prepared yet: on the loading screen (`before_start`,
+    /// every CPU thread, reporting to `callback`, with its Skip button) or in the background.
+    PrecompiledPrepOutcome RunPrecompiledPrep(PrecompiledPrep& prep, std::stop_token stop,
+                                              bool before_start,
+                                              const VideoCore::DiskResourceLoadCallback* callback);
+
+    /// Stops the background preparation and waits for its jobs. What it kept stays.
+    void StopPrecompiledPrep();
+
+    /// GPU thread: the records the preparation kept since the last call become drawable.
+    void TakePrecompiledPublished();
+
+    /// GPU thread: a kept record becomes drawable (when it kept infos).
+    void AddPrecompiledRecord(const VideoCommon::PrecompiledStore::Record& record);
+
+    /// The bytes read for kept info `blob` are the ones kept.
+    bool KeptInfoIntact(u32 blob, std::span<const u8> bytes) const;
 
     /// A precompiled pipeline for the current key, drawn with the shader infos the preparation
     /// step kept while a worker builds it from the SPIR-V it kept (or, without it, translates
@@ -364,6 +387,8 @@ private:
     std::unordered_multimap<u64, PrecompiledRecord> precompiled_compute_records;
     std::vector<std::pair<u64, u64>> precompiled_env_index;         ///< Offset, size
     std::vector<std::pair<u64, u32>> precompiled_info_blobs;        ///< Offset, size (all blobs)
+    std::vector<u64> precompiled_blob_hashes; ///< Of each blob's content, by blob id
+    std::unique_ptr<PrecompiledPrep> precompiled_prep;
     std::filesystem::path precompiled_path;
     std::filesystem::path precompiled_infos_path;
     std::ifstream precompiled_file;       ///< GPU thread only

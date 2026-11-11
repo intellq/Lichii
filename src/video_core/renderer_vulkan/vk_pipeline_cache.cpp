@@ -57,6 +57,7 @@
 #include "video_core/shader_cache_v2/precompiled_shader_stamp.h"
 #include "video_core/nx2_stutter_trace.h"
 #include "video_core/pipeline_cache_files.h"
+#include "video_core/precompiled_store.h"
 #include "video_core/renderer_vulkan/async_draw_policy.h"
 #include "shader_recompiler/info_serialize.h"
 #include "common/zstd_compression.h"
@@ -678,6 +679,191 @@ bool GraphicsPipelineCacheKey::operator==(const GraphicsPipelineCacheKey& rhs) c
                        reinterpret_cast<const char*>(&rhs) + sizeof(unique_hashes),
                        state.Size()) == 0;
 }
+
+/// The state of one preparation of the precompiled pipelines, shared by its jobs: on the loading
+/// screen, then (or only) in the background while the game runs.
+struct PipelineCache::PrecompiledPrep {
+    struct Record {
+        bool compute{};
+        std::vector<u32> envs;
+        GraphicsPipelineCacheKey graphics_key{};
+        ComputePipelineCacheKey compute_key{};
+    };
+
+    std::filesystem::path path; ///< The precompiled file
+    std::vector<std::pair<u64, u64>> env_index;
+    std::vector<Record> records;
+    /// The records still to prepare, in the order they are prepared; `next` is the first one not
+    /// submitted yet
+    std::vector<u32> order;
+    size_t next{};
+    VideoCommon::PrecompiledStore store;
+
+    std::mutex mutex;
+    std::condition_variable_any cv;
+    size_t in_flight{};
+    size_t done{}; ///< Records prepared, failed or skipped, this run and earlier ones
+    size_t built{};
+    size_t failed{};
+    size_t skipped{};
+    /// Every batch the preparation submitted to, so a stop cancels and waits for all of them
+    std::vector<VideoCommon::ShaderJobBatch> batches;
+    /// The loading screen's progress, while it prepares (under mutex)
+    const VideoCore::DiskResourceLoadCallback* callback{};
+    std::chrono::steady_clock::time_point begin;
+    std::chrono::steady_clock::time_point last_log;
+    std::jthread thread;
+
+    /// Under mutex.
+    void Report() {
+        const size_t total = records.size();
+        if (prep_report_due(done, total)) {
+            if (callback) {
+                (*callback)(VideoCore::LoadCallbackStage::Recipe, done, total);
+            }
+            VideoCommon::ShaderWarm::SetRecipeProgress(done, total);
+        }
+    }
+
+    void Finish(bool ok) {
+        std::scoped_lock lock{mutex};
+        --in_flight;
+        ++(ok ? built : failed);
+        ++done;
+        Report();
+        // While the game runs, a line every 30 s.
+        const auto now = std::chrono::steady_clock::now();
+        if (!callback && now - last_log >= std::chrono::seconds{30}) {
+            const double seconds = std::chrono::duration<double>(now - begin).count();
+            LOG_INFO(Render_Vulkan,
+                     "Precompiled pipelines: {} of {} done ({} prepared, {} failed this run, "
+                     "{:.1f}/s)",
+                     done, records.size(), built, failed,
+                     seconds > 0 ? static_cast<double>(built + failed) / seconds : 0.0);
+            last_log = now;
+        }
+        cv.notify_all();
+    }
+
+    /// A job a stop cancelled before it built: its slot is freed, but it is not done, so a
+    /// later run prepares it.
+    void Release() {
+        std::scoped_lock lock{mutex};
+        --in_flight;
+        cv.notify_all();
+    }
+
+    std::vector<FileEnvironment> ReadEnvs(const std::vector<u32>& ids) const {
+        std::ifstream file(path, std::ios::binary);
+        file.exceptions(std::ifstream::failbit);
+        std::vector<FileEnvironment> envs(ids.size());
+        for (size_t i = 0; i < ids.size(); ++i) {
+            file.clear();
+            const auto [offset, size] = env_index[ids[i]];
+            file.seekg(static_cast<std::streamoff>(offset));
+            envs[i].Deserialize(file, static_cast<std::streamoff>(offset + size));
+        }
+        return envs;
+    }
+
+    VideoCommon::PrecompiledStore::Record StoreRecord(u32 index) const {
+        const auto& source = records[index];
+        VideoCommon::PrecompiledStore::Record record;
+        record.index = index;
+        record.compute = source.compute;
+        record.key_hash =
+            source.compute ? source.compute_key.Hash() : source.graphics_key.Hash();
+        return record;
+    }
+
+    void NoteFailed(u32 index) {
+        auto record = StoreRecord(index);
+        record.failed = true;
+        store.AddRecord(record);
+    }
+
+    /// Keeps a prepared pipeline's shader infos and SPIR-V in the store, once each (most
+    /// pipelines share their programs' infos with others, and stages their SPIR-V). A compute
+    /// pipeline's info and SPIR-V are its stage 0.
+    void Keep(u32 index, const Shader::Info* compute_info, const GraphicsPipeline* graphics,
+              const std::array<std::vector<u32>, Maxwell::MaxShaderStage>& spirv) {
+        using Store = VideoCommon::PrecompiledStore;
+        const auto& source = records[index];
+        auto record = StoreRecord(index);
+        // An entry holds 5 environments: a record with both vertex programs (6) is drawn after
+        // translating it, as without the file; so is an emulated mesh pipeline.
+        if (source.envs.size() > Store::MaxStages || (graphics && graphics->IsEmulatedMesh())) {
+            store.AddRecord(record);
+            return;
+        }
+        record.env_count = static_cast<u8>(source.envs.size());
+        std::ranges::copy(source.envs, record.envs.begin());
+        for (size_t stage = 0; stage < Store::MaxStages; ++stage) {
+            const Shader::Info* const info =
+                graphics ? graphics->StageInfo(stage) : (stage == 0 ? compute_info : nullptr);
+            if (!info) {
+                continue;
+            }
+            std::vector<u8> bytes;
+            Shader::SerializeInfo(*info, bytes);
+            const u64 info_hash =
+                Common::CityHash64(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+            record.infos[stage] = store.AddBlob(Store::BlobKind::Info, info_hash, bytes);
+            if (!spirv[stage].empty()) {
+                const auto* const words = reinterpret_cast<const u8*>(spirv[stage].data());
+                const size_t size = spirv[stage].size() * sizeof(u32);
+                const u64 spirv_hash =
+                    Common::CityHash64(reinterpret_cast<const char*>(words), size);
+                const auto compressed = Common::Compression::CompressDataZSTD(words, size, 3);
+                record.spirv[stage] = store.AddBlob(Store::BlobKind::Spirv, spirv_hash, compressed);
+            }
+        }
+        store.AddRecord(record);
+    }
+
+private:
+    static bool prep_report_due(size_t done_, size_t total) {
+        return done_ % 64 == 0 || done_ == total;
+    }
+};
+
+namespace {
+/// Runs `action` when destroyed unless it ran or was disarmed: a job stage that a stop dropped
+/// before it ran still frees its slot (and notes the record as not finished, for its driver
+/// stage).
+class UnlessRan {
+public:
+    explicit UnlessRan(std::function<void()> action_) : action{std::move(action_)} {}
+    UnlessRan(UnlessRan&& other) noexcept : action{std::move(other.action)} {
+        other.action = nullptr;
+    }
+    UnlessRan& operator=(UnlessRan&&) = delete;
+    UnlessRan(const UnlessRan&) = delete;
+    ~UnlessRan() {
+        if (action) {
+            action();
+        }
+    }
+    void Disarm() {
+        action = nullptr;
+    }
+
+private:
+    std::function<void()> action;
+};
+
+/// Records a precompiled preparation keeps in flight in the background, by default: a quarter of
+/// the CPU threads, 1 to 4. EDEN_NX2_PRECOMPILED_THREADS sets it.
+size_t BackgroundPrecompiledJobs() {
+    if (const char* value = std::getenv("EDEN_NX2_PRECOMPILED_THREADS")) {
+        const long count = std::strtol(value, nullptr, 10);
+        if (count > 0) {
+            return static_cast<size_t>(count);
+        }
+    }
+    return std::clamp<size_t>(std::thread::hardware_concurrency() / 4, 1, 4);
+}
+} // Anonymous namespace
 
 PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
                              const Device& device_, Scheduler& scheduler_,
@@ -1433,6 +1619,7 @@ void PipelineCache::ReturnPools(std::shared_ptr<ShaderPools> pools) {
 }
 
 void PipelineCache::StopBackgroundJobs() {
+    StopPrecompiledPrep();
     scheduled_prebuild.reset();
 }
 
@@ -2212,29 +2399,90 @@ void PipelineCache::CanonicalizeNativeKey(
 
 namespace {
 /// Whether the driver keeps compiled pipelines in a cache of its own (the proprietary NVIDIA and
-/// AMD drivers), where the preparation step leaves them.
+/// AMD drivers, and RADV while Mesa's shader cache is on), where the preparation step leaves them.
 bool DriverCachesPipelines(const Device& device) {
-    switch (device.GetDriverID()) {
-    case VK_DRIVER_ID_NVIDIA_PROPRIETARY:
-    case VK_DRIVER_ID_AMD_PROPRIETARY:
-    case VK_DRIVER_ID_MESA_RADV:
-        return true;
-    default:
-        return false;
-    }
+    return device.DriverCachesPipelines();
 }
 } // Anonymous namespace
+
+void PipelineCache::StopPrecompiledPrep() {
+    if (!precompiled_prep) {
+        return;
+    }
+    auto& prep = *precompiled_prep;
+    prep.thread.request_stop();
+    if (prep.thread.joinable()) {
+        prep.thread.join();
+    }
+    std::vector<VideoCommon::ShaderJobBatch> batches;
+    {
+        std::scoped_lock lock{prep.mutex};
+        batches = prep.batches;
+    }
+    for (const auto& batch : batches) {
+        shader_jobs->Cancel(batch);
+    }
+    for (const auto& batch : batches) {
+        batch.Wait();
+    }
+    prep.store.Close();
+    VideoCommon::ShaderWarm::SetRecipeProgress(0, 0);
+}
+
+void PipelineCache::AddPrecompiledRecord(const VideoCommon::PrecompiledStore::Record& record) {
+    using Store = VideoCommon::PrecompiledStore;
+    if (record.failed || record.env_count == 0 || record.env_count > Store::MaxStages ||
+        std::ranges::all_of(record.infos, [](u32 id) { return id == Store::NoBlob; })) {
+        return;
+    }
+    PrecompiledRecord kept;
+    kept.envs = record.envs;
+    kept.env_count = record.env_count;
+    kept.infos = record.infos;
+    kept.spirv = record.spirv;
+    if (record.compute) {
+        precompiled_compute_records.emplace(record.key_hash, kept);
+    } else {
+        precompiled_records.emplace(record.key_hash, kept);
+    }
+}
+
+bool PipelineCache::KeptInfoIntact(u32 blob, std::span<const u8> bytes) const {
+    return blob < precompiled_blob_hashes.size() &&
+           Common::CityHash64(reinterpret_cast<const char*>(bytes.data()), bytes.size()) ==
+               precompiled_blob_hashes[blob];
+}
+
+void PipelineCache::TakePrecompiledPublished() {
+    if (!precompiled_prep || !precompiled_prep->store.HasPublished()) {
+        return;
+    }
+    std::vector<VideoCommon::PrecompiledStore::Blob> blobs;
+    std::vector<VideoCommon::PrecompiledStore::Record> records;
+    precompiled_prep->store.TakePublished(precompiled_info_blobs.size(), blobs, records);
+    for (const auto& blob : blobs) {
+        precompiled_info_blobs.emplace_back(blob.offset, blob.size);
+        precompiled_blob_hashes.push_back(blob.hash);
+    }
+    for (const auto& record : records) {
+        AddPrecompiledRecord(record);
+    }
+}
 
 void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path& base_dir,
                                        std::stop_token stop_loading,
                                        const VideoCore::DiskResourceLoadCallback& callback) {
-    // A load before this one may hold the kept infos open, which the step rewrites and renames.
+    using Store = VideoCommon::PrecompiledStore;
+    // A load before this one may still prepare, and its draws read its files.
+    StopPrecompiledPrep();
+    precompiled_prep.reset();
     precompiled_file.close();
     precompiled_infos_file.close();
     kept_infos_generation.fetch_add(1, std::memory_order_acq_rel);
     precompiled_records.clear();
     precompiled_compute_records.clear();
-    precompiled_stages.clear();
+    precompiled_info_blobs.clear();
+    precompiled_blob_hashes.clear();
     const char* enabled = std::getenv("EDEN_NX2_PRECOMPILED");
     if (enabled && enabled[0] == '0') {
         return;
@@ -2277,48 +2525,45 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
         }
         return;
     }
+    // The files of the format before the resumable one: never valid for this build.
+    for (const auto& old_file :
+         {fmt::format("precompiled_infos.fork-v{}.bin", CACHE_VERSION),
+          fmt::format("precompiled_infos.fork-v{}.bin.tmp", CACHE_VERSION),
+          fmt::format("precompiled_prepared.fork-v{}.txt", CACHE_VERSION),
+          fmt::format("precompiled_progress.fork-v{}.txt", CACHE_VERSION)}) {
+        std::filesystem::remove(base_dir / old_file, error);
+    }
     const auto modified = std::filesystem::last_write_time(path, error).time_since_epoch().count();
     // The driver keeps what it compiled; the step runs again for another file, driver, translator or
     // shader settings: the resolution scale is folded into the shaders (RescalingPass), and the
-    // bloom fix, loop safety checks and debug renderer change their translation or SPIR-V.
-    const auto stamp_path =
-        base_dir / fmt::format("precompiled_prepared.fork-v{}.txt", CACHE_VERSION);
-    const auto infos_path =
-        base_dir / fmt::format("precompiled_infos.fork-v{}.bin", CACHE_VERSION);
+    // bloom fix, loop safety checks and debug renderer change their translation or SPIR-V. The
+    // infos' serialization version is in it too.
+    const auto data_path = base_dir / fmt::format("precompiled_kept.fork-v{}.bin", CACHE_VERSION);
+    const auto index_path =
+        base_dir / fmt::format("precompiled_kept_index.fork-v{}.bin", CACHE_VERSION);
     const auto& resolution = Settings::values.resolution_info;
     const bool radv_vulkan_cache =
         use_vulkan_pipeline_cache && device.GetDriverID() == VK_DRIVER_ID_MESA_RADV;
     const std::string stamp = fmt::format(
-        "{} {} {:#x} {} scale {} {}/{} bloom {} loops {} debug {}{} shader {:#x} table {} {}\n",
-        file_size, modified, device.GetDriverVersion(), device.GetModelName(),
-        resolution.active, resolution.up_scale, resolution.down_shift,
-        Settings::values.fix_bloom_effects.GetValue(),
+        "{} {} {:#x} {} scale {} {}/{} bloom {} loops {} debug {} {}{} shader {:#x} table {} {}\n",
+        file_size, modified, device.GetDriverVersion(), device.GetModelName(), resolution.active,
+        resolution.up_scale, resolution.down_shift, Settings::values.fix_bloom_effects.GetValue(),
         Settings::values.disable_shader_loop_safety_checks.GetValue(),
-        Settings::values.renderer_debug.GetValue(), radv_vulkan_cache ? " radv-vulkan-cache-1" : "",
-        VideoCommon::ShaderCacheV2::PrecompiledShaderStamp,
-        host_info.support_handle_table_arrays, Shader::Optimization::HandleTableSize());
+        Settings::values.renderer_debug.GetValue(), PrecompiledInfosMagic,
+        radv_vulkan_cache ? " radv-vulkan-cache-1" : "",
+        VideoCommon::ShaderCacheV2::PrecompiledShaderStamp, host_info.support_handle_table_arrays,
+        Shader::Optimization::HandleTableSize());
     const char* force = std::getenv("EDEN_NX2_PRECOMPILED_FORCE");
-    if (!(force && force[0] == '1')) {
-        std::ifstream stamp_file(stamp_path, std::ios::binary);
-        const std::string previous{std::istreambuf_iterator<char>(stamp_file), {}};
-        if (previous == stamp && (!radv_vulkan_cache || vulkan_pipeline_cache_loaded)) {
-            if (LoadPrecompiledInfos(path, infos_path, stamp)) {
-                LOG_INFO(Render_Vulkan, "Precompiled pipelines already prepared for this driver");
-                return;
-            }
-            LOG_INFO(Render_Vulkan, "Precompiled pipelines were prepared without keeping their "
-                                    "shader infos: preparing them again");
-        }
+    if (force && force[0] == '1') {
+        std::filesystem::remove(data_path, error);
+        std::filesystem::remove(index_path, error);
     }
 
-    struct Record {
-        bool compute{};
-        std::vector<u32> envs;
-        GraphicsPipelineCacheKey graphics_key{};
-        ComputePipelineCacheKey compute_key{};
-    };
-    std::vector<std::pair<u64, u64>> env_index;
-    std::vector<Record> records;
+    auto prep_owner = std::make_unique<PrecompiledPrep>();
+    auto& prep = *prep_owner;
+    prep.path = path;
+    auto& env_index = prep.env_index;
+    auto& records = prep.records;
     try {
         std::ifstream file(path, std::ios::binary);
         file.exceptions(std::ifstream::failbit);
@@ -2352,7 +2597,7 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
             file.read(reinterpret_cast<char*>(&kind), 1)
                 .read(reinterpret_cast<char*>(&count), 1)
                 .read(reinterpret_cast<char*>(&pad), 2);
-            Record record;
+            PrecompiledPrep::Record record;
             record.compute = kind == 1;
             record.envs.resize(count);
             file.read(reinterpret_cast<char*>(record.envs.data()), count * sizeof(u32));
@@ -2370,6 +2615,11 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
             if (!record.compute) {
                 // One environment per stage the key names, as for the disk cache's records.
                 VideoCommon::CheckGraphicsRecord(record.graphics_key.unique_hashes, count);
+                // Keys leave the driver out (as the cache's records do), so a record made before
+                // a driver update keys the pipeline as draws will.
+                ClearDriverFields(record.graphics_key);
+                record.graphics_key.state.RekeyRecordedLogicOp(dynamic_features);
+                record.graphics_key.state.CanonicalizeLogicOp(dynamic_features);
             }
             records.push_back(std::move(record));
         }
@@ -2379,283 +2629,197 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
     }
 
     const size_t total = records.size();
-    // Environments are read from the file by each job; this bounds the records submitted and not
-    // finished, so the checkpoint below stays close to the work done.
-    const size_t max_in_flight = 256;
-
-    // A checkpoint lets an interrupted step (closed, or a crash) continue where it stopped. A boot
-    // that starts twice from the same record without getting further skips past it.
-    const auto progress_path =
-        base_dir / fmt::format("precompiled_progress.fork-v{}.txt", CACHE_VERSION);
-    size_t start_index = 0;
-    u32 restarts = 0;
-    {
-        std::ifstream progress_file(progress_path, std::ios::binary);
-        std::string line;
-        size_t next{};
-        u32 count{};
-        // The explicit RADV cache is saved only after preparation. An interrupted preparation
-        // must restart so that entries from before the interruption are also saved.
-        if (!radv_vulkan_cache && std::getline(progress_file, line) && line + '\n' == stamp &&
-            (progress_file >> next >> count)) {
-            start_index = std::min(next, total);
-            restarts = count + 1;
-        }
+    Store::Loaded loaded;
+    if (!prep.store.Open(data_path, index_path, stamp, static_cast<u32>(total), loaded)) {
+        return;
     }
-    if (restarts >= 2) {
-        const size_t jump = std::min(total - start_index, max_in_flight * 2);
+    // What earlier runs kept serves this session's draws at once.
+    precompiled_path = path;
+    precompiled_infos_path = data_path;
+    precompiled_env_index = env_index;
+    for (const auto& blob : loaded.blobs) {
+        precompiled_info_blobs.emplace_back(blob.offset, blob.size);
+        precompiled_blob_hashes.push_back(blob.hash);
+    }
+    for (const auto& record : loaded.records) {
+        AddPrecompiledRecord(record);
+    }
+    if (loaded.poisoned != 0) {
         LOG_WARNING(Render_Vulkan,
-                    "Precompiled pipelines stopped twice near record {}: skipping {} records",
-                    start_index, jump);
-        start_index += jump;
-        restarts = 0;
+                    "Precompiled pipelines: {} records were being prepared when two earlier runs "
+                    "ended without finishing them; they are left out",
+                    loaded.poisoned);
     }
-    const auto write_progress = [&](size_t next, u32 count) {
-        std::ofstream progress_file(progress_path, std::ios::binary | std::ios::trunc);
-        progress_file << stamp << next << ' ' << count << '\n';
-    };
-    write_progress(start_index, restarts);
 
-    struct {
-        std::mutex mutex;
-        std::condition_variable_any cv;
-        size_t in_flight{};
-        size_t built{};
-        size_t failed{};
-        size_t skipped{};
-        size_t low_water{};      ///< first record not finished yet
-        size_t checkpoint{};
-        std::vector<u8> done;
-    } state;
-    state.done.assign(total, 0);
-    // The shader infos and SPIR-V of each graphics pipeline built, kept once each (most
-    // pipelines share their programs' infos with others, and stages their SPIR-V), written to
-    // the file as they come.
-    // NX2INFO4: magic, u32 stamp size, the stamp, u64 index offset, the blobs (an info:
-    // Shader::SerializeInfo; SPIR-V: one zstd frame of its words); at the index: u32 record
-    // count, u32 blob count, per record u64 key hash, u8 environment count, u8 kind (0
-    // graphics, 1 compute: its info and SPIR-V are stage 0's), 2 bytes 0, u32
-    // environments[5], u32 info blobs[5] and u32 SPIR-V blobs[5] (per pipeline stage, ~0 for
-    // none), per blob u64 offset, u32 size, u32 0; then u32 stage count, per stage u64 program
-    // hash, u8 pipeline stage, 3 bytes 0, u32 environment, u32 info blob (graphics only).
-    struct {
-        std::mutex mutex;
-        std::ofstream file;
-        u64 offset{};
-        std::unordered_map<u64, u32> infos_by_hash;
-        std::unordered_map<u64, u32> spirv_by_hash;
-        std::vector<std::pair<u64, u32>> blobs;
-        std::vector<std::array<u32, 5>> record_infos;
-        std::vector<std::array<u32, 5>> record_spirv;
-        std::unordered_set<u32> legacy_loads; ///< Info blobs with legacy attribute loads
-        u64 spirv_bytes{};
-    } kept;
-    kept.record_infos.assign(total, {NoInfo, NoInfo, NoInfo, NoInfo, NoInfo});
-    kept.record_spirv.assign(total, {NoInfo, NoInfo, NoInfo, NoInfo, NoInfo});
-    auto kept_temporary = infos_path;
-    kept_temporary += ".tmp";
-    kept.file.open(kept_temporary, std::ios::binary | std::ios::trunc);
-    const auto put = [](std::ofstream& file, const auto& value) {
-        file.write(reinterpret_cast<const char*>(&value), sizeof(value));
-    };
-    kept.file.write(PrecompiledInfosMagic.data(), PrecompiledInfosMagic.size());
-    put(kept.file, static_cast<u32>(stamp.size()));
-    kept.file.write(stamp.data(), static_cast<std::streamsize>(stamp.size()));
-    const u64 index_offset_at = static_cast<u64>(kept.file.tellp());
-    put(kept.file, u64{0});
-    kept.offset = static_cast<u64>(kept.file.tellp());
-    // Under kept.mutex: the blob's id, written once.
-    const auto keep_blob = [&kept](std::unordered_map<u64, u32>& by_hash, u64 hash,
-                                   std::span<const u8> bytes) -> u32 {
-        const auto [it, added] = by_hash.try_emplace(hash, static_cast<u32>(kept.blobs.size()));
-        if (added) {
-            kept.file.write(reinterpret_cast<const char*>(bytes.data()),
-                            static_cast<std::streamsize>(bytes.size()));
-            kept.blobs.emplace_back(kept.offset, static_cast<u32>(bytes.size()));
-            kept.offset += bytes.size();
+    // The order: compute programs first (a missing one stalls for seconds), then each graphics
+    // pair's most likely render state before its next ones (the file lists a pair's states from
+    // the most likely on), and last the pipelines the disk cache already holds (they are built
+    // from it; their infos only save the translation when one is evicted).
+    std::vector<u32> rank(total, 0);
+    for (size_t index = 1; index < total; ++index) {
+        const auto& record = records[index];
+        const auto& before = records[index - 1];
+        if (!record.compute && !before.compute &&
+            record.graphics_key.unique_hashes == before.graphics_key.unique_hashes) {
+            rank[index] = rank[index - 1] + 1;
         }
-        return it->second;
+    }
+    struct Ordered {
+        u32 index;
+        u8 group;
+        u32 rank;
     };
-    // A compute pipeline's info and SPIR-V are its stage 0.
-    const auto keep_infos = [&kept, &keep_blob](
-                                size_t index, const Shader::Info* compute_info,
-                                const GraphicsPipeline* graphics,
-                                const std::array<std::vector<u32>, Maxwell::MaxShaderStage>& spirv) {
-        if (graphics && graphics->IsEmulatedMesh()) {
+    std::vector<Ordered> ordered;
+    ordered.reserve(total);
+    size_t done_before = 0;
+    for (u32 index = 0; index < total; ++index) {
+        auto& record = records[index];
+        if (loaded.states[index] != Store::RecordState::Pending) {
+            ++done_before;
+            continue;
+        }
+        if (!record.compute && !KeyFitsDevice(record.graphics_key)) {
+            // Made for a device with other dynamic state.
+            ++done_before;
+            continue;
+        }
+        const u8 group = record.compute ? 0
+                         : disk_pipelines.contains(record.graphics_key.Hash()) ? 2
+                                                                               : 1;
+        ordered.push_back({index, group, record.compute ? 0 : rank[index]});
+    }
+    std::ranges::stable_sort(ordered, [](const Ordered& a, const Ordered& b) {
+        return std::tie(a.group, a.rank) < std::tie(b.group, b.rank);
+    });
+    prep.order.reserve(ordered.size());
+    for (const auto& entry : ordered) {
+        prep.order.push_back(entry.index);
+    }
+    prep.done = done_before;
+    LOG_INFO(Render_Vulkan,
+             "Precompiled pipelines: {} records, {} prepared before ({} kept for draws), {} to "
+             "prepare{}",
+             total, done_before, precompiled_records.size() + precompiled_compute_records.size(),
+             prep.order.size(),
+             loaded.interrupted != 0
+                 ? fmt::format(", {} interrupted by an earlier run", loaded.interrupted)
+                 : std::string{});
+    if (prep.order.empty()) {
+        prep.store.Close();
+        LOG_INFO(Render_Vulkan, "Precompiled pipelines already prepared for this driver");
+        return;
+    }
+    precompiled_prep = std::move(prep_owner);
+
+    if (Settings::values.precompiled_prepare.GetValue() ==
+        Settings::PrecompiledPrepare::BeforeStart) {
+        // Drops a press left over from a launch that finished preparing first.
+        VideoCommon::ShaderWarm::TakeSkipRecipe();
+        const auto outcome = RunPrecompiledPrep(prep, stop_loading, true, &callback);
+        if (outcome != PrecompiledPrepOutcome::Skipped) {
+            if (outcome == PrecompiledPrepOutcome::Stopped) {
+                StopPrecompiledPrep();
+            }
             return;
         }
-        std::array<std::vector<u8>, 5> infos;
-        std::array<std::vector<u8>, 5> compressed;
-        std::array<u64, 5> info_hash{};
-        std::array<u64, 5> spirv_hash{};
-        std::array<bool, 5> legacy_loads{};
-        for (size_t stage = 0; stage < infos.size(); ++stage) {
-            const Shader::Info* const info =
-                graphics ? graphics->StageInfo(stage) : (stage == 0 ? compute_info : nullptr);
-            if (!info) {
-                continue;
-            }
-            Shader::SerializeInfo(*info, infos[stage]);
-            legacy_loads[stage] = info->loads.Legacy();
-            info_hash[stage] = Common::CityHash64(reinterpret_cast<const char*>(infos[stage].data()),
-                                                  infos[stage].size());
-            if (!spirv[stage].empty()) {
-                const auto* const words = reinterpret_cast<const u8*>(spirv[stage].data());
-                const size_t size = spirv[stage].size() * sizeof(u32);
-                spirv_hash[stage] =
-                    Common::CityHash64(reinterpret_cast<const char*>(words), size);
-                compressed[stage] = Common::Compression::CompressDataZSTD(words, size, 3);
-            }
-        }
-        std::scoped_lock lock{kept.mutex};
-        for (size_t stage = 0; stage < infos.size(); ++stage) {
-            if (infos[stage].empty()) {
-                continue;
-            }
-            kept.record_infos[index][stage] =
-                keep_blob(kept.infos_by_hash, info_hash[stage], infos[stage]);
-            if (legacy_loads[stage]) {
-                kept.legacy_loads.insert(kept.record_infos[index][stage]);
-            }
-            if (!compressed[stage].empty()) {
-                const size_t before = kept.blobs.size();
-                kept.record_spirv[index][stage] =
-                    keep_blob(kept.spirv_by_hash, spirv_hash[stage], compressed[stage]);
-                if (kept.blobs.size() != before) {
-                    kept.spirv_bytes += compressed[stage].size();
-                }
-            }
-        }
-    };
-    state.low_water = state.checkpoint = start_index;
-    const auto begin = std::chrono::steady_clock::now();
-    const auto complete = [&](size_t index) {
-        // Under state.mutex.
-        state.done[index] = 1;
-        while (state.low_water < total && state.done[state.low_water]) {
-            ++state.low_water;
-        }
-        if (state.low_water >= state.checkpoint + 512) {
-            state.checkpoint = state.low_water;
-            write_progress(state.low_water, 0);
-        }
-        const size_t done = start_index + state.built + state.failed + state.skipped;
-        if (done % 64 == 0 || done == total) {
-            callback(VideoCore::LoadCallbackStage::Recipe, done, total);
-        }
-    };
-    const auto finish = [&](size_t index, bool ok) {
-        std::scoped_lock lock{state.mutex};
-        --state.in_flight;
-        ++(ok ? state.built : state.failed);
-        complete(index);
-        state.cv.notify_all();
-    };
-    const auto skip = [&](size_t index) {
-        std::scoped_lock lock{state.mutex};
-        ++state.skipped;
-        complete(index);
-    };
-    // A job a stop cancelled before it built: its slot is freed, but it is not done, so the
-    // checkpoint stays before it and the next boot builds it.
-    const auto abandon = [&] {
-        std::scoped_lock lock{state.mutex};
-        --state.in_flight;
-        state.cv.notify_all();
-    };
-    const auto read_envs = [&path, &env_index](const std::vector<u32>& ids) {
-        std::ifstream file(path, std::ios::binary);
-        file.exceptions(std::ifstream::failbit);
-        std::vector<FileEnvironment> envs(ids.size());
-        for (size_t i = 0; i < ids.size(); ++i) {
-            file.clear();
-            const auto [offset, size] = env_index[ids[i]];
-            file.seekg(static_cast<std::streamoff>(offset));
-            envs[i].Deserialize(file, static_cast<std::streamoff>(offset + size));
-        }
-        return envs;
-    };
-    // Each record is a job of the shader job scheduler, as the boot's and the precache's builds
-    // are: its CPU stage reads the environments and translates, and returns the driver build, so
-    // the IR is freed before the driver compiles. The scheduler's memory budget bounds the stages
-    // that run at once. Soon: the game waits for this step, while the background prebuild doesn't.
-    const VideoCommon::ShaderJobBatch batch = shader_jobs->CreateBatch();
-    LOG_INFO(Render_Vulkan, "Preparing {} precompiled pipelines from {}, from record {}", total,
-             Common::FS::PathToUTF8String(path), start_index);
-    if (start_index != 0) {
-        LOG_WARNING(Render_Vulkan,
-                    "Continuing after a crash: the {} records before {} are drawn after translating "
-                    "them, without kept infos",
-                    start_index, start_index);
+        LOG_INFO(Render_Vulkan, "Precompiled pipelines: skipped from the loading screen, the "
+                                "rest are prepared while the game runs");
     }
-    // Drops a press left over from a launch that finished preparing first.
-    VideoCommon::ShaderWarm::TakeSkipRecipe();
-    callback(VideoCore::LoadCallbackStage::Recipe, start_index, total);
-    bool skipped_by_user = false;
-    for (size_t index = start_index; index < total; ++index) {
-        if (stop_loading.stop_requested()) {
+    prep.thread = std::jthread([this, &prep](std::stop_token stop) {
+        Common::SetCurrentThreadName("PrecompiledPrep");
+        Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
+        RunPrecompiledPrep(prep, stop, false, nullptr);
+    });
+}
+
+PipelineCache::PrecompiledPrepOutcome PipelineCache::RunPrecompiledPrep(
+    PrecompiledPrep& prep, std::stop_token stop, bool before_start,
+    const VideoCore::DiskResourceLoadCallback* callback) {
+    const size_t total = prep.records.size();
+    // On the loading screen every CPU thread prepares; while the game runs, a few, behind the
+    // game's own shader work. Environments are read from the file by each job; this bounds the
+    // records submitted and not finished.
+    const size_t max_in_flight = before_start ? 256 : BackgroundPrecompiledJobs();
+    const auto priority = before_start ? VideoCommon::ShaderJobPriority::Soon
+                                       : VideoCommon::ShaderJobPriority::Background;
+    const VideoCommon::ShaderJobBatch batch = shader_jobs->CreateBatch();
+    {
+        std::scoped_lock lock{prep.mutex};
+        prep.batches.push_back(batch);
+        if (prep.begin == std::chrono::steady_clock::time_point{}) {
+            prep.begin = std::chrono::steady_clock::now();
+        }
+    }
+    if (before_start || prep.next == 0) {
+        LOG_INFO(Render_Vulkan, "Preparing {} precompiled pipelines from {}, {}", prep.order.size() - prep.next,
+                 Common::FS::PathToUTF8String(prep.path),
+                 before_start ? "before the game starts"
+                              : fmt::format("while the game runs ({} at a time)", max_in_flight));
+    }
+    {
+        std::scoped_lock lock{prep.mutex};
+        prep.callback = callback;
+        prep.Report();
+    }
+    auto outcome = PrecompiledPrepOutcome::Finished;
+    while (true) {
+        if (stop.stop_requested()) {
+            outcome = PrecompiledPrepOutcome::Stopped;
             break;
         }
-        if (VideoCommon::ShaderWarm::TakeSkipRecipe()) {
-            skipped_by_user = true;
+        if (before_start && VideoCommon::ShaderWarm::TakeSkipRecipe()) {
+            outcome = PrecompiledPrepOutcome::Skipped;
             break;
         }
-        auto& record = records[index];
-        u64 env_bytes = 0;
-        for (const u32 id : record.envs) {
-            env_bytes += env_index[id].second;
-        }
-        // A compute record is built even when the disk cache built its key: a key has a record for
-        // each storage pointer state the program can be translated in, and the boot built one.
-        if (!record.compute) {
-            auto& key = record.graphics_key;
-            // Keys leave the driver out (as the cache's records do), so a record made before a
-            // driver update keys the pipeline as draws will.
-            ClearDriverFields(key);
-            key.state.RekeyRecordedLogicOp(dynamic_features);
-            key.state.CanonicalizeLogicOp(dynamic_features);
-            // Made for a device with other dynamic state. (Pipelines also in the disk cache are
-            // built too: their shader infos are kept like the others'.)
-            if (!KeyFitsDevice(key)) {
-                skip(index);
-                continue;
-            }
-        }
+        u32 index{};
         {
-            std::unique_lock lock{state.mutex};
-            // Stopping cancels the jobs, so the slots would never free up.
-            if (!state.cv.wait(lock, stop_loading,
-                               [&] { return state.in_flight < max_in_flight; })) {
+            std::unique_lock lock{prep.mutex};
+            if (prep.next >= prep.order.size()) {
                 break;
             }
-            ++state.in_flight;
+            // Stopping cancels the jobs, so the slots would never free up.
+            if (!prep.cv.wait(lock, stop, [&] { return prep.in_flight < max_in_flight; })) {
+                outcome = PrecompiledPrepOutcome::Stopped;
+                break;
+            }
+            index = prep.order[prep.next++];
+            ++prep.in_flight;
         }
+        u64 env_bytes = 0;
+        for (const u32 id : prep.records[index].envs) {
+            env_bytes += prep.env_index[id].second;
+        }
+        UnlessRan cpu_unless_ran{[&prep] { prep.Release(); }};
         shader_jobs->Submit(
-            {.priority = VideoCommon::ShaderJobPriority::Soon,
+            {.priority = priority,
              .cpu_bytes = TranslationBytes(env_bytes),
              .driver_bytes = DriverCompileBytes,
-             .cpu = [this, index, &record, &read_envs, &finish,
-                     &abandon, &keep_infos](VideoCommon::ShaderJobContext& context) -> VideoCommon::ShaderDriverStage {
+             .cpu = [this, index, &prep, unless_ran = std::move(cpu_unless_ran)](
+                        VideoCommon::ShaderJobContext& context) mutable
+                 -> VideoCommon::ShaderDriverStage {
+                 unless_ran.Disarm();
                  if (context.StopRequested()) {
-                     abandon();
+                     prep.Release();
                      return {};
                  }
+                 const auto& record = prep.records[index];
+                 prep.store.MarkStarted(index);
                  Common::UniqueFunction<bool> build;
                  try {
-                     auto envs = read_envs(record.envs);
+                     auto envs = prep.ReadEnvs(record.envs);
                      ShaderPools pools;
                      if (record.compute) {
                          std::array<std::vector<u32>, Maxwell::MaxShaderStage> spirv;
                          auto entry{CreateComputePipeline(pools, record.compute_key, envs.front(),
                                                           nullptr, false, nullptr, &spirv[0])};
                          if (entry.pipeline) {
-                             build = [index, &keep_infos, spirv = std::move(spirv),
+                             build = [index, &prep, spirv = std::move(spirv),
                                       pipeline = std::move(entry.pipeline)] {
                                  pipeline->Build();
                                  if (pipeline->BuildFailed()) {
                                      return false;
                                  }
-                                 keep_infos(index, &pipeline->StageInfo(), nullptr, spirv);
+                                 prep.Keep(index, &pipeline->StageInfo(), nullptr, spirv);
                                  return true;
                              };
                          }
@@ -2671,13 +2835,13 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
                                                               MakeSpan(env_ptrs), nullptr, false,
                                                               nullptr, nullptr, &spirv)};
                          if (pipeline) {
-                             build = [index, &keep_infos, spirv = std::move(spirv),
+                             build = [index, &prep, spirv = std::move(spirv),
                                       pipeline = std::move(pipeline)] {
                                  pipeline->Build();
                                  if (pipeline->Failed()) {
                                      return false;
                                  }
-                                 keep_infos(index, nullptr, pipeline.get(), spirv);
+                                 prep.Keep(index, nullptr, pipeline.get(), spirv);
                                  return true;
                              };
                          }
@@ -2686,249 +2850,69 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
                      LOG_DEBUG(Render_Vulkan, "Precompiled pipeline failed: {}", e.what());
                  }
                  if (!build) {
-                     finish(index, false);
+                     prep.NoteFailed(index);
+                     prep.Finish(false);
                      return {};
                  }
-                 return [index, &finish, build = std::move(build)]() mutable {
+                 // A driver stage a stop drops: not finished, and not a crash either.
+                 UnlessRan driver_unless_ran{[&prep, index] {
+                     prep.store.MarkAbandoned(index);
+                     prep.Release();
+                 }};
+                 return [index, &prep, build = std::move(build),
+                         unless_ran = std::move(driver_unless_ran)]() mutable {
+                     unless_ran.Disarm();
                      bool ok = false;
                      try {
                          ok = build();
                      } catch (const std::exception& e) {
                          LOG_DEBUG(Render_Vulkan, "Precompiled pipeline failed: {}", e.what());
                      }
-                     finish(index, ok);
+                     if (!ok) {
+                         prep.NoteFailed(index);
+                     }
+                     prep.Finish(ok);
                  };
              }},
             &batch);
     }
+    if (outcome == PrecompiledPrepOutcome::Skipped) {
+        // The jobs in flight finish while the game starts; the background run continues after
+        // them. The loading screen goes.
+        std::scoped_lock lock{prep.mutex};
+        prep.callback = nullptr;
+        return outcome;
+    }
     while (!batch.Idle()) {
-        if (stop_loading.stop_requested()) {
+        if (stop.stop_requested()) {
             shader_jobs->Cancel(batch);
+            outcome = PrecompiledPrepOutcome::Stopped;
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds{100});
     }
     batch.Wait();
-    const double seconds =
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
-    LOG_INFO(Render_Vulkan,
-             "Precompiled pipelines: {} prepared, {} failed, {} skipped, in {:.1f} s{}", state.built, state.failed, state.skipped, seconds,
-             skipped_by_user ? " (preparation skipped from the loading screen)" : "");
-    if (stop_loading.stop_requested()) {
-        kept.file.close();
-        std::filesystem::remove(kept_temporary, error);
-        // The next boot prepares from the first record again, so the infos it keeps are
-        // complete; only a crash (which leaves the checkpoint) continues from the checkpoint.
-        std::filesystem::remove(progress_path, error);
-        return;
-    }
+    // A background run also waits for what the loading screen left in flight.
     {
-        std::vector<size_t> kept_records;
-        for (size_t index = 0; index < total; ++index) {
-            // An entry holds 5 environments: a record with both vertex programs (6) is drawn
-            // after translating it, as without the file.
-            if (records[index].envs.size() <= 5 &&
-                std::ranges::any_of(kept.record_infos[index], [](u32 id) { return id != NoInfo; })) {
-                kept_records.push_back(index);
-            }
-        }
-        const u64 index_offset = kept.offset;
-        put(kept.file, static_cast<u32>(kept_records.size()));
-        put(kept.file, static_cast<u32>(kept.blobs.size()));
-        for (const size_t index : kept_records) {
-            const auto& record = records[index];
-            put(kept.file, record.compute ? record.compute_key.Hash() : record.graphics_key.Hash());
-            put(kept.file, static_cast<u8>(record.envs.size()));
-            put(kept.file, std::array<u8, 3>{static_cast<u8>(record.compute ? 1 : 0)});
-            std::array<u32, 5> envs{NoInfo, NoInfo, NoInfo, NoInfo, NoInfo};
-            std::ranges::copy(record.envs, envs.begin());
-            put(kept.file, envs);
-            put(kept.file, kept.record_infos[index]);
-            put(kept.file, kept.record_spirv[index]);
-        }
-        for (const auto& [offset, size] : kept.blobs) {
-            put(kept.file, offset);
-            put(kept.file, size);
-            put(kept.file, u32{0});
-        }
-        // Each graphics stage's info by its program and recorded environment, for pipelines
-        // whose key was not predicted: a stage's translation depends on its own program and
-        // environment, except where legacy attribute loads are mapped to the previous stage's
-        // outputs (ConvertLegacyToGeneric), so those infos are left out. So is a program and
-        // environment whose infos differ between pipelines (an info that depends on the pipeline).
-        constexpr u32 Differs = ~0U - 1;
-        std::map<std::tuple<u64, u8, u32>, u32> stage_infos;
-        for (const size_t index : kept_records) {
-            const auto& record = records[index];
-            if (record.compute || record.graphics_key.unique_hashes[0] != 0) {
-                continue;
-            }
-            size_t position = 0;
-            for (size_t program = 1; program < Maxwell::MaxShaderProgram; ++program) {
-                const u64 program_hash = record.graphics_key.unique_hashes[program];
-                if (program_hash == 0) {
-                    continue;
-                }
-                if (position >= record.envs.size()) {
-                    break;
-                }
-                const u32 env = record.envs[position++];
-                const u8 stage = static_cast<u8>(program - 1);
-                const u32 info = kept.record_infos[index][stage];
-                if (info == NoInfo || kept.legacy_loads.contains(info)) {
-                    continue;
-                }
-                const auto [it, added] = stage_infos.try_emplace({program_hash, stage, env}, info);
-                if (!added && it->second != info) {
-                    it->second = Differs;
-                }
-            }
-        }
-        const auto differing = static_cast<size_t>(std::ranges::count_if(
-            stage_infos, [](const auto& entry) { return entry.second == Differs; }));
-        put(kept.file, static_cast<u32>(stage_infos.size() - differing));
-        for (const auto& [stage_key, info] : stage_infos) {
-            if (info == Differs) {
-                continue;
-            }
-            const auto& [program_hash, stage, env] = stage_key;
-            put(kept.file, program_hash);
-            put(kept.file, std::array<u8, 4>{stage});
-            put(kept.file, env);
-            put(kept.file, info);
-        }
-        LOG_INFO(Render_Vulkan,
-                 "Precompiled stage infos: {} by program and environment, {} left out (their "
-                 "infos differ between pipelines)",
-                 stage_infos.size() - differing, differing);
-        kept.file.seekp(static_cast<std::streamoff>(index_offset_at));
-        put(kept.file, index_offset);
-        kept.file.close();
-        std::filesystem::rename(kept_temporary, infos_path, error);
-        LOG_INFO(Render_Vulkan,
-                 "Precompiled shader infos and SPIR-V kept for {} pipelines: {} distinct infos, "
-                 "{} distinct stages of SPIR-V ({} MiB compressed), {} MiB in all",
-                 kept_records.size(), kept.infos_by_hash.size(), kept.spirv_by_hash.size(),
-                 kept.spirv_bytes >> 20, kept.offset >> 20);
+        std::unique_lock lock{prep.mutex};
+        prep.cv.wait(lock, stop, [&] { return prep.in_flight == 0; });
     }
-    // What was kept serves this session. Without the stamp a later launch prepares again, from
-    // the start so that it keeps every pipeline's infos; the driver still has what it compiled.
-    // Do not mark RADV preparation complete until the populated Vulkan cache is on disk.
-    const bool cache_saved = !skipped_by_user &&
-                             (!radv_vulkan_cache ||
-                              SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename,
-                                                           vulkan_pipeline_cache, CACHE_VERSION));
-    if (skipped_by_user) {
-        std::filesystem::remove(stamp_path, error);
-    } else if (cache_saved) {
-        std::ofstream stamp_file(stamp_path, std::ios::binary | std::ios::trunc);
-        stamp_file << stamp;
-        stamp_file.close();
-    }
-    std::filesystem::remove(progress_path, error);
-    LoadPrecompiledInfos(path, infos_path, stamp);
-}
-
-bool PipelineCache::LoadPrecompiledInfos(const std::filesystem::path& precompiled,
-                                         const std::filesystem::path& infos,
-                                         const std::string& stamp) {
-    // Streams of an earlier load would be read at this file's offsets.
-    precompiled_file.close();
-    precompiled_infos_file.close();
-    kept_infos_generation.fetch_add(1, std::memory_order_acq_rel);
-    precompiled_records.clear();
-    precompiled_compute_records.clear();
-    precompiled_stages.clear();
-    try {
-        std::ifstream file(infos, std::ios::binary);
-        file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-        const auto get = [&file](auto& value) {
-            file.read(reinterpret_cast<char*>(&value), sizeof(value));
-        };
-        std::array<char, 8> magic{};
-        u32 stamp_size{}, record_count{}, blob_count{};
-        u64 index_offset{};
-        file.read(magic.data(), magic.size());
-        get(stamp_size);
-        if (std::string_view{magic.data(), magic.size()} != PrecompiledInfosMagic ||
-            stamp_size != stamp.size()) {
-            return false;
-        }
-        std::string file_stamp(stamp_size, '\0');
-        file.read(file_stamp.data(), stamp_size);
-        if (file_stamp != stamp) {
-            return false;
-        }
-        get(index_offset);
-        file.seekg(static_cast<std::streamoff>(index_offset));
-        get(record_count);
-        get(blob_count);
-        precompiled_records.reserve(record_count);
-        for (u32 i = 0; i < record_count; ++i) {
-            u64 key_hash{};
-            u8 env_count{};
-            std::array<u8, 3> pad{};
-            PrecompiledRecord record;
-            get(key_hash);
-            get(env_count);
-            get(pad);
-            get(record.envs);
-            get(record.infos);
-            get(record.spirv);
-            record.env_count = env_count;
-            if (pad[0] == 1) {
-                precompiled_compute_records.emplace(key_hash, record);
-            } else {
-                precompiled_records.emplace(key_hash, record);
-            }
-        }
-        precompiled_info_blobs.resize(blob_count);
-        for (auto& [offset, size] : precompiled_info_blobs) {
-            u32 pad{};
-            get(offset);
-            get(size);
-            get(pad);
-        }
-        u32 stage_count{};
-        get(stage_count);
-        precompiled_stages.reserve(stage_count);
-        for (u32 i = 0; i < stage_count; ++i) {
-            u64 program_hash{};
-            std::array<u8, 4> stage{};
-            PrecompiledStage entry;
-            get(program_hash);
-            get(stage);
-            get(entry.env);
-            get(entry.info);
-            entry.stage = stage[0];
-            if (entry.stage < 5 && entry.info < blob_count) {
-                precompiled_stages.emplace(program_hash, entry);
-            }
-        }
-
-        std::ifstream prep(precompiled, std::ios::binary);
-        prep.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-        std::array<u32, 4> header{};
-        prep.read(magic.data(), magic.size());
-        prep.read(reinterpret_cast<char*>(header.data()), sizeof(header));
-        precompiled_env_index.resize(header[1]);
-        prep.read(reinterpret_cast<char*>(precompiled_env_index.data()),
-                  precompiled_env_index.size() * sizeof(precompiled_env_index[0]));
-    } catch (const std::exception&) {
-        // Unreadable, or a damaged count (a reserve that cannot be met): prepared again.
-        precompiled_records.clear();
-        precompiled_compute_records.clear();
-        precompiled_stages.clear();
-        return false;
-    }
-    precompiled_path = precompiled;
-    precompiled_infos_path = infos;
+    const double seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - prep.begin).count();
+    std::scoped_lock lock{prep.mutex};
+    prep.callback = nullptr;
     LOG_INFO(Render_Vulkan,
-             "Precompiled shader infos for {} graphics and {} compute pipelines, and {} graphics "
-             "stages by program",
-             precompiled_records.size(), precompiled_compute_records.size(),
-             precompiled_stages.size());
-    return true;
+             "Precompiled pipelines: {} prepared, {} failed this run, {} of {} done, in {:.1f} s{}",
+             prep.built, prep.failed, prep.done, total, seconds,
+             outcome == PrecompiledPrepOutcome::Stopped ? " (stopped: a later launch continues)"
+                                                        : "");
+    if (outcome == PrecompiledPrepOutcome::Finished) {
+        prep.store.Close();
+        VideoCommon::ShaderWarm::SetRecipeProgress(0, 0);
+        // The explicit RADV cache holds what the preparation compiled once it is on disk.
+        QueueVulkanPipelineCacheSave();
+    }
+    return outcome;
 }
 
 /// A kept info blob, on the GPU thread; false when it is unreadable or needs layer emulation.
@@ -2987,8 +2971,17 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreatePrecompiledGraphicsPipeli
             if (record.infos[stage] == NoInfo) {
                 continue;
             }
-            if (!ReadKeptInfo(precompiled_infos_file,
-                              precompiled_info_blobs.at(record.infos[stage]), infos[stage])) {
+            const auto [offset, size] = precompiled_info_blobs.at(record.infos[stage]);
+            bytes.resize(size);
+            precompiled_infos_file.clear();
+            precompiled_infos_file.seekg(static_cast<std::streamoff>(offset));
+            precompiled_infos_file.read(reinterpret_cast<char*>(bytes.data()), size);
+            if (!KeptInfoIntact(record.infos[stage], bytes)) {
+                CountPrecompiledReason("kept infos damaged");
+                return nullptr;
+            }
+            std::span<const u8> in{bytes};
+            if (!Shader::DeserializeInfo(in, infos[stage]) || infos[stage].requires_layer_emulation) {
                 CountPrecompiledReason("infos unreadable or with layer emulation");
                 return nullptr;
             }
@@ -3251,8 +3244,24 @@ ComputePipelineCacheEntry PipelineCache::CreatePrecompiledComputePipeline(
             precompiled_file.seekg(static_cast<std::streamoff>(env_offset));
             recorded.Deserialize(precompiled_file,
                                  static_cast<std::streamoff>(env_offset + env_size));
-            if (!ReadKeptInfo(precompiled_infos_file, precompiled_info_blobs.at(record.infos[0]),
-                              info)) {
+            if (!precompiled_infos_file.is_open()) {
+                precompiled_infos_file.open(precompiled_infos_path, std::ios::binary);
+                precompiled_infos_file.exceptions(std::ifstream::failbit |
+                                                  std::ifstream::badbit);
+            }
+            const auto [offset, size] = precompiled_info_blobs.at(record.infos[0]);
+            std::vector<u8> bytes(size);
+            precompiled_infos_file.clear();
+            precompiled_infos_file.seekg(static_cast<std::streamoff>(offset));
+            precompiled_infos_file.read(reinterpret_cast<char*>(bytes.data()), size);
+            if (!KeptInfoIntact(record.infos[0], bytes)) {
+                if (!first_reason) {
+                    first_reason = "kept infos damaged";
+                }
+                continue;
+            }
+            std::span<const u8> in{bytes};
+            if (!Shader::DeserializeInfo(in, info)) {
                 if (!first_reason) {
                     first_reason = "infos unreadable or with layer emulation";
                 }
@@ -3636,6 +3645,8 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipelineSlowPath() {
 
 void PipelineCache::TickFrame() {
     ++frame_count;
+    // What the background preparation kept since the last frame serves the next draws.
+    TakePrecompiledPublished();
     native_wait_budget_us =
         static_cast<s64>(Settings::values.native_pipeline_wait_ms.GetValue()) * 1000;
     while (!evicted_pipelines.empty() && scheduler.IsFree(evicted_pipelines.front().first)) {

@@ -27,7 +27,18 @@ not stall while the driver compiles them.
 3. At boot, after the shader cache's boot builds, `PipelineCache::PreparePrecompiled` builds every
    pipeline of that file once and drops it, as jobs of the shader job scheduler. The driver keeps
    the compiled code in its own cache, and Lichii keeps each pipeline's shader infos and SPIR-V
-   (`precompiled_infos.fork-v<N>.bin`).
+   (`precompiled_kept.fork-v<N>.bin` and its index), as each one finishes. The setting "Prepare
+   precompiled shaders" (`precompiled_prepare`) picks when: **While playing** (default) starts the
+   game at once and prepares on a few shader jobs at a time behind the game's own (a quarter of the
+   CPU threads, 1 to 4; `EDEN_NX2_PRECOMPILED_THREADS=<n>`), compute programs first, then each
+   vertex/pixel pair's most likely render state before its others, and the pipelines the disk
+   cache already holds last; each pipeline becomes drawable from kept infos as soon as it is done.
+   **Before the game starts** prepares on the loading screen with every CPU thread; its Skip
+   button continues in the background. Either way a later launch continues where one stopped
+   (closed, skipped or crashed). Ocarina of Time on an RX 9070 XT (RADV, Ryzen 7 9800X3D): about
+   21 pipelines a second per job with a cold driver cache (~26 min for 133,822 with 4 jobs), about
+   1,000 a second with 4 jobs when Mesa's cache already holds them (a new emulator build), 50 s on
+   the loading screen then.
 4. When a draw first needs a pipeline the file predicted, the GPU thread checks that the game's state
    answers the recorded environments' questions as they were answered
    (`FileEnvironment::AnswersHoldFor`: a constant buffer value only used as a texture handle stands
@@ -77,8 +88,9 @@ precompiled keys can only match draws if both sides clear them. The attribute ma
 vertex program's header; a program found to load an attribute its header does not list is logged,
 its pipeline is dropped once, and its keys keep every attribute type from then on.
 
-The preparation step needs a driver that keeps its own pipeline cache (NVIDIA and AMD's proprietary
-drivers, as `DriverCachesPipelines` lists); elsewhere it runs only with `EDEN_NX2_PRECOMPILED=1`.
+The preparation step needs a driver that keeps its own pipeline cache (NVIDIA's and AMD's
+proprietary drivers, and RADV while Mesa's shader cache is on, as `Device::DriverCachesPipelines`
+says); elsewhere it runs only with `EDEN_NX2_PRECOMPILED=1`.
 Records carry the driver of the machine that recorded them; they are prepared with this machine's,
 as draws key them, so a driver update only means preparing again.
 
@@ -208,26 +220,32 @@ u64 offset and u64 size; per record u8 kind (0 graphics, 1 compute), u8 environm
 reserved, u32 environment indices in stage order, then the 1056-byte graphics or 24-byte compute key.
 Environments are stored once and shared by the records that use them.
 
-`precompiled_infos.fork-v<N>.bin`, written by the preparation step next to it: `NX2INFO4`, u32 stamp
-size and the stamp (`precompiled_prepared`'s line: the file, driver and build it was written for),
-u64 index offset, the blobs (a `Shader::SerializeInfo` info, or one zstd frame of a stage's SPIR-V
-words), then the index: u32 record count, u32 blob count, per record u64 key hash, u8 environment
-count, u8 kind (0 graphics, 1 compute: stage 0), 2 bytes 0, u32 environments[5], u32 info blobs[5],
-u32 SPIR-V blobs[5] (per pipeline stage, ~0 for none), per blob u64 offset, u32 size, u32 0, and
-the stage table: u32 count, per graphics stage u64 program hash, u8 pipeline stage, 3 bytes 0, u32
-environment index and u32 info blob, once for each program and environment (one with legacy
-attribute loads, or whose infos differ between pipelines, is left out).
-Ocarina of Time: 753 MiB. The stamp holds the build's `scm_rev`: a build that changes the translator
-without a new revision needs `EDEN_NX2_PRECOMPILED_FORCE=1`, or its kept SPIR-V is the old one's.
+`precompiled_kept.fork-v<N>.bin` and `precompiled_kept_index.fork-v<N>.bin`, written by the
+preparation step next to it (`video_core/precompiled_store.h`). The data file: `NX2PDAT1`, u32 stamp
+size and the stamp (the file, driver, build and shader settings it was written for), then the blobs
+(a `Shader::SerializeInfo` info, or one zstd frame of a stage's SPIR-V words). The index:
+`NX2PIDX1`, u32 version 1, u32 the precompiled file's record count, u32 stamp size and the stamp,
+then entries appended as the step runs: a blob (u8 1, u8 kind 0 info / 1 SPIR-V, u16 0, u32 size,
+u64 offset, u64 CityHash64 of the info's bytes or the SPIR-V's words), a prepared record (u8 2, u8
+environment count, u8 flags 1 compute / 2 failed, u8 0, u32 record index, u64 key hash, u32
+environments[5], u32 info blobs[5], u32 SPIR-V blobs[5], ~0 for none), and the start (u8 3) or
+cancel (u8 4) of a record (3 bytes 0, u32 record index). A record's entry is written after the data
+it names is flushed; an open drops a cut-off tail and anything after an entry naming data the file
+lacks. A record two runs started and never finished or cancelled (crashes) is noted as failed and
+not prepared again. Another stamp starts both files again. Ocarina of Time: 730 MiB and 12 MiB.
+The stamp holds the build's `scm_rev`: a build that changes the translator without a new revision
+needs `EDEN_NX2_PRECOMPILED_FORCE=1`, or its kept SPIR-V is the old one's. Infos read for a draw are
+checked against their hash. Files of the format before (`precompiled_infos`, `precompiled_prepared`,
+`precompiled_progress`) are deleted.
 
 ## Switches
 
 - `EDEN_NX2_PRECOMPILED=0`: skip the preparation step; `1`: run it also on drivers without their
   own pipeline cache.
-- `EDEN_NX2_PRECOMPILED_FORCE=1`: prepare again although `precompiled_prepared.fork-v<N>.txt` says the
-  file was prepared for this driver and build.
-- `EDEN_NX2_EVICT_AFTER_FRAMES=<frames>`: frames a graphics pipeline may go unused before it is
-  destroyed (default 9000); `0` keeps every pipeline.
+- `EDEN_NX2_PRECOMPILED_FORCE=1`: prepare again from the first record although the kept files say
+  the file was (partly) prepared for this driver and build.
+- `EDEN_NX2_PRECOMPILED_THREADS=<n>`: shader jobs the preparation keeps in flight while the game
+  runs (default a quarter of the CPU threads, 1 to 4).
 - `EDEN_NX2_PIPELINE_LOG_LIMIT=<n>`: how many runtime pipeline builds over 2 ms are logged (default
   400; builds over 100 ms are always logged).
 - `EDEN_NX2_PRECOMPILED_FAST=0`: translate precompiled pipelines on the GPU thread like the others

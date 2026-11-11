@@ -482,6 +482,16 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Enables GPU vendor-specific pipeline cache.\nThis option can improve shader loading "
               "time significantly in cases where the Vulkan driver does not store pipeline cache "
               "files internally."));
+    INSERT(Settings, precompiled_prepare, tr("Prepare precompiled shaders:"),
+           tr("Only for games with a precompiled shader file (made from a recipe). Preparing "
+              "compiles every pipeline in it once, so new areas don't stutter, and takes a while "
+              "(about 10 minutes for Ocarina of Time on every CPU thread). It runs again after an "
+              "emulator update, a GPU driver update or a new recipe.\nWhile playing: the game "
+              "starts right away and a few shader threads prepare in the background, the "
+              "pipelines most likely to be needed first; the status bar shows the progress.\n"
+              "Before the game starts: the loading screen prepares on every CPU thread first, "
+              "with a Skip button that continues in the background.\nEither way, work done is "
+              "kept: closing the game continues it at the next launch."));
     INSERT(Settings, precache_shaders, tr("Precache shaders before game start:"),
            tr("Builds shaders on the loading screen, on every CPU thread, so they don't stutter "
               "the first time the game uses them: the compute shaders found in the game files, "
@@ -986,6 +996,11 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                           {
                               PAIR(ConsoleMode, Docked, tr("Docked")),
                               PAIR(ConsoleMode, Handheld, tr("Handheld")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::PrecompiledPrepare>::Index(),
+                          {
+                              PAIR(PrecompiledPrepare, WhilePlaying, tr("While playing")),
+                              PAIR(PrecompiledPrepare, BeforeStart, tr("Before the game starts")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::PrecacheShaders>::Index(),
                           {

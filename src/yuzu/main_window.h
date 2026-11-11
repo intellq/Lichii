@@ -573,6 +573,7 @@ private:
     // Status bar elements
     QLabel* message_label = nullptr;
     QLabel* shader_building_label = nullptr;
+    QLabel* shader_prepare_label = nullptr;
     QLabel* res_scale_label = nullptr;
     QLabel* emu_speed_label = nullptr;
     QLabel* game_fps_label = nullptr;

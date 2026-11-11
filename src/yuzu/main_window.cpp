@@ -1016,6 +1016,10 @@ void MainWindow::InitializeWidgets() {
 
     shader_building_label = new QLabel();
     shader_building_label->setToolTip(tr("The amount of shaders currently being built"));
+    shader_prepare_label = new QLabel();
+    shader_prepare_label->setToolTip(
+        tr("Precompiled shaders being prepared in the background. Until this finishes, new "
+           "areas can still stutter; what is done is kept for the next launch."));
     res_scale_label = new QLabel();
     res_scale_label->setToolTip(tr("The current selected resolution scaling multiplier."));
     emu_speed_label = new QLabel();
@@ -1034,8 +1038,8 @@ void MainWindow::InitializeWidgets() {
         tr("Time taken to emulate a Switch frame, not counting framelimiting or v-sync. For "
            "full-speed emulation this should be at most 16.67 ms."));
 
-    for (auto& label : {shader_building_label, res_scale_label, emu_speed_label, game_fps_label,
-                        dlss_status_label, emu_frametime_label}) {
+    for (auto& label : {shader_prepare_label, shader_building_label, res_scale_label,
+                        emu_speed_label, game_fps_label, dlss_status_label, emu_frametime_label}) {
         label->setVisible(false);
         label->setFrameStyle(QFrame::NoFrame);
         label->setContentsMargins(4, 0, 4, 0);
@@ -2698,6 +2702,7 @@ void MainWindow::OnEmulationStopped() {
     // Disable status bar updates
     status_bar_update_timer.stop();
     shader_building_label->setVisible(false);
+    shader_prepare_label->setVisible(false);
     res_scale_label->setVisible(false);
     emu_speed_label->setVisible(false);
     game_fps_label->setVisible(false);
@@ -5659,6 +5664,15 @@ void MainWindow::UpdateStatusBar() {
         shader_building_label->setVisible(true);
     } else {
         shader_building_label->setVisible(false);
+    }
+    const auto preparing = VideoCommon::ShaderWarm::GetRecipeProgress();
+    if (preparing.total != 0 && preparing.done < preparing.total) {
+        shader_prepare_label->setText(
+            tr("Preparing shaders: %1%")
+                .arg(static_cast<int>(preparing.done * 100 / preparing.total)));
+        shader_prepare_label->setVisible(true);
+    } else {
+        shader_prepare_label->setVisible(false);
     }
 
     const auto res_info = Settings::values.resolution_info;
