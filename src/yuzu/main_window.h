@@ -380,11 +380,16 @@ private slots:
     void OnGameListSetPlayTime(u64 program_id);
     void OnGameListDumpRomFS(u64 program_id, const std::string& game_path, DumpRomFSTarget target);
     void OnGameListPrepareShadersFromRecipe(u64 program_id, const std::string& game_path);
+    void OnGameListBuildPrecompiledFromPlay(u64 program_id, const std::string& game_path);
     void OnGameListVerifyIntegrity(const std::string& game_path);
     void OnGameListConvertToNup(const std::string& game_path);
     void OnGameListPrepareShaderWarm(u64 program_id, const std::string& game_path);
     void OnGameListDeleteShaderWarm(u64 program_id);
     void PrepareShaderPrecache(u64 title_id, const std::filesystem::path& game_path);
+    /// Builds the game's precompiled file from its recorded shader cache and its files, with a
+    /// progress window. True when it was built.
+    bool BuildPrecompiledFromPlay(u64 program_id, const std::string& game_path, bool at_launch);
+    void OfferPrecompiledBuild(u64 title_id, const std::string& game_path);
     void OnGameListExtractNup(const std::string& game_path);
     void OnGameListEditNupMetadata(const std::string& game_path);
     void OnGameListCopyTID(u64 program_id);

@@ -104,6 +104,7 @@ log shows it as prepared pipelines that still take hundreds of milliseconds to b
 ## Commands
 
 ```
+nx2-precompile build    --game GAME.nup|ROMFS_DIR --out precompiled.fork-v<N>.nx2prep --cache CACHE [--cache CACHE ...]
 nx2-precompile extract  --game GAME.nup|ROMFS_DIR --out PREFIX [--packages merged|union] [--threads N]
 nx2-precompile scan     --pkg PREFIX.programs --out PREFIX [--priors FILE] [--threads N]
 nx2-precompile validate --pkg PREFIX.programs --cache CACHE.bin --out PREFIX [--priors FILE]
@@ -115,6 +116,37 @@ nx2-precompile assemble --recipe GAME.nx2recipe --game GAME --out precompiled.fo
 nx2-precompile audit    --recipe GAME.nx2recipe --game GAME
 nx2-precompile cache-version
 ```
+
+`build` is `run_pipeline.sh` up to the precompiled file (extract, priors, scan, game tables, mesh
+draws and environments, `build_precompiled.py` with `--k 4 --mesh-k 2`) in one process, without
+Python: the Python steps are ported to C++ in `video_core/nx2_precompile_build.cpp`, and the file
+is the scripts' byte for byte (checked on Ocarina of Time with one cache and with two, one of them
+of the format before the shader cache v2). It leaves out the checks (`validate`, the held-out
+check, `check`, the SPIR-V emit check) and the recipe. Ocarina of Time: 37 s on 16 threads, against
+about 50 s for the script.
+
+## In the emulator
+
+The same pipeline runs in Lichii from the player's own play (`VideoCommon::Nx2Precompile::Build`,
+the tool's commands live in `video_core/nx2_precompile.cpp`):
+
+- The game list's "Build Precompiled Shaders from My Play..." reads the game's files and the
+  title's `lichii-cache.v2.bin`, and writes `precompiled.fork-v<N>.nx2prep` next to it, with a
+  progress window. A precompiled file from elsewhere (a recipe) is replaced only after asking.
+- At launch, a Switch 2 game (a NUP) whose cache has recorded 1,000 pipelines or more and has no
+  precompiled file gets the offer to build one before it starts (Build now, Not now, Don't ask for
+  this game), and again once the cache has grown by a quarter (at least 500) since the last build,
+  or by 1,000 since the player said not now. `precompiled_from_play.fork-v<N>.txt` in the title's
+  shader folder remembers which (`built N`, `declined N`, `never`). A precompiled file without
+  that note (a recipe's) is left alone.
+
+The precompiled file is then prepared as any other (see step 3 above). Its shader code comes from
+the player's own copy of the game, so it is never shared; a recipe made from it can be.
+
+The extractor used to give its programs and variations in whatever order its threads found them,
+so two runs listed the copies of a shared program in different orders, and the predictions that
+depend on which copy comes first differed. It now puts them in the order they are first found in
+file order (the origin rule already was), so the same game and caches always give the same file.
 
 ## Recipes
 

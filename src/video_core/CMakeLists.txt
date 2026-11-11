@@ -126,8 +126,6 @@ add_library(video_core STATIC
     nx2_debug_control.cpp
     nx2_recipe.cpp
     nx2_recipe.h
-    nx2_precompile.cpp
-    nx2_precompile.h
     nx2_debug_control.h
     nx2_fast_draw.cpp
     nx2_fast_draw.h
@@ -319,6 +317,10 @@ add_library(video_core STATIC
     shader_cache_v2/records.h
     shader_cache_v2/stale_variants.cpp
     shader_cache_v2/stale_variants.h
+    nx2_precompile.cpp
+    nx2_precompile.h
+    nx2_precompile_build.cpp
+    nx2_precompile_build.h
     precompiled_store.cpp
     precompiled_store.h
     shader_environment.cpp
@@ -534,6 +536,9 @@ endif()
 
 # Shader precache builder: game archives use zstd (also with dictionaries) and zlib.
 target_link_libraries(video_core PRIVATE zstd::zstd ZLIB::ZLIB)
+
+# nx2-precompile's priors file (video_core/nx2_precompile.cpp).
+target_link_libraries(video_core PRIVATE nlohmann_json::nlohmann_json)
 
 # Shader cache v2: record checksums, and a hash of the native lowering sources made at build time,
 # so that a record lowered by another lowering is told apart (ShaderCacheV2::LoweringStamp).

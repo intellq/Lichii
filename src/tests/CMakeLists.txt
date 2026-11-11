@@ -145,6 +145,7 @@ add_executable(tests
     video_core/vulkan_pipeline_binaries.cpp
     video_core/shader_precache.cpp
     video_core/precompiled_store.cpp
+    video_core/nx2_precompile_build.cpp
     video_core/shader_object_pool.cpp
     video_core/storage_binding_capacity.cpp
     video_core/native_indirect_reset.cpp

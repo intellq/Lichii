@@ -294,8 +294,7 @@ private:
     /// precompiled_kept*.fork-v<N>.bin) for CreatePrecompiledGraphicsPipeline. Runs once per
     /// precompiled file, driver and emulator build: on the loading screen or in the background
     /// (precompiled_prepare), continuing what an earlier launch left.
-    void PreparePrecompiled(u64 title_id, const std::filesystem::path& base_dir,
-                            std::stop_token stop_loading,
+    void PreparePrecompiled(const std::filesystem::path& base_dir, std::stop_token stop_loading,
                             const VideoCore::DiskResourceLoadCallback& callback);
 
     struct PrecompiledPrep;

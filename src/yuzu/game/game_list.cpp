@@ -503,6 +503,8 @@ void GameList::AddGamePopup(QMenu& context_menu, u64 program_id, const std::stri
     }
     QAction* prepare_from_recipe =
         context_menu.addAction(tr("Prepare Precompiled Shaders from Recipe..."));
+    QAction* build_from_play =
+        context_menu.addAction(tr("Build Precompiled Shaders from My Play..."));
     QAction* ryujinx = context_menu.addAction(tr("Link to Ryujinx"));
     context_menu.addSeparator();
     QMenu* remove_menu = context_menu.addMenu(tr("Remove"));
@@ -643,6 +645,9 @@ void GameList::AddGamePopup(QMenu& context_menu, u64 program_id, const std::stri
     }
     connect(prepare_from_recipe, &QAction::triggered, this, [this, program_id, path]() {
         emit PrepareShadersFromRecipeRequested(program_id, path);
+    });
+    connect(build_from_play, &QAction::triggered, this, [this, program_id, path]() {
+        emit BuildPrecompiledFromPlayRequested(program_id, path);
     });
     connect(remove_all_content, &QAction::triggered, this, [this, program_id]() {
         emit RemoveInstalledEntryRequested(program_id, QtCommon::Game::InstalledEntryType::Game);

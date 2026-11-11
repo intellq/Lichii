@@ -74,7 +74,6 @@
 #include "video_core/renderer_vulkan/vk_descriptor_pool.h"
 #include "video_core/renderer_vulkan/vk_pipeline_binaries.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
-#include "video_core/nx2_precompile.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache_records.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_cache_v2.h"
@@ -2124,7 +2123,7 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
     records.clear();
     log.reset();
 
-    PreparePrecompiled(title_id, pipeline_cache_filename.parent_path(), stop_loading, callback);
+    PreparePrecompiled(pipeline_cache_filename.parent_path(), stop_loading, callback);
 
     if (use_vulkan_pipeline_cache) {
         SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
@@ -2469,7 +2468,7 @@ void PipelineCache::TakePrecompiledPublished() {
     }
 }
 
-void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path& base_dir,
+void PipelineCache::PreparePrecompiled(const std::filesystem::path& base_dir,
                                        std::stop_token stop_loading,
                                        const VideoCore::DiskResourceLoadCallback& callback) {
     using Store = VideoCommon::PrecompiledStore;
@@ -2498,17 +2497,7 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
     // count, u32 record count, u32 reserved; per environment u64 offset and u64 size of a
     // GenericEnvironment::Serialize blob; per record u8 kind (0 graphics, 1 compute), u8
     // environment count, u16 reserved, u32 environment indices in stage order, then the key.
-    auto path = base_dir / fmt::format("precompiled.fork-v{}.nx2prep", CACHE_VERSION);
-    if (VideoCommon::Nx2Precompile::Mode() != 0) {
-        const auto assembled = VideoCommon::Nx2Precompile::EnsurePrecompiledFile(
-            title_id, base_dir, CACHE_VERSION, stop_loading);
-        if (stop_loading.stop_requested()) {
-            return;
-        }
-        if (!assembled.empty()) {
-            path = assembled;
-        }
-    }
+    const auto path = base_dir / fmt::format("precompiled.fork-v{}.nx2prep", CACHE_VERSION);
     std::error_code error;
     const auto file_size = std::filesystem::file_size(path, error);
     if (error) {
