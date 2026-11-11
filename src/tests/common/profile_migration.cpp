@@ -372,6 +372,24 @@ TEST_CASE("Per-root strategies copy settings and link large data without replaci
     CHECK(Read(Backups(f.destination)[0] / "settings.ini") == "current");
 }
 
+TEST_CASE("Another import preserves the completed profile and its earlier backup",
+          "[profile_migration]") {
+    Fixture f;
+    Write(f.source / "save", "first source");
+    Write(f.destination / "save", "original destination");
+    RunImport(f.MakePlan());
+    REQUIRE(GetState(f.state) == State::Complete);
+    REQUIRE(Backups(f.destination).size() == 1);
+    PrepareAnotherImport(f.state);
+    REQUIRE(GetState(f.state) == State::Unresolved);
+    CHECK(Read(f.destination / "save") == "first source");
+    CHECK(Read(Backups(f.destination)[0] / "save") == "original destination");
+    Write(f.source / "save", "second source");
+    RunImport(f.MakePlan());
+    CHECK(Read(f.destination / "save") == "second source");
+    CHECK(Backups(f.destination).size() == 2);
+}
+
 TEST_CASE("Failed preparation keeps both originals and offers recovery", "[profile_migration]") {
     Fixture f;
     Write(f.source / "save", "legacy");

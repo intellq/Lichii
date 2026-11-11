@@ -37,6 +37,8 @@ State GetState(const std::filesystem::path& state_dir);
 bool NeedsMigration(const std::filesystem::path& state_dir);
 void MarkFresh(const std::filesystem::path& state_dir);
 void Recover(const std::filesystem::path& state_dir);
+/// Prepare a new explicit import without rolling back completed data or deleting backups.
+void PrepareAnotherImport(const std::filesystem::path& state_dir);
 void RunImport(const Plan& plan, const Prepare& prepare = {});
 
 } // namespace Common::FS::ProfileMigration

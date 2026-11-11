@@ -370,6 +370,20 @@ void Recover(const fs::path& state_dir) {
     RecoverUnlocked(state_dir);
 }
 
+void PrepareAnotherImport(const fs::path& state_dir) {
+    const MigrationLock lock{state_dir};
+    if (GetState(state_dir) == State::Pending) {
+        RecoverUnlocked(state_dir);
+    }
+    // Keep the completion marker until its journal and markers are gone. An interruption then
+    // cannot make the completed import look pending and roll it back on the next launch.
+    fs::remove(state_dir / "journal");
+    fs::remove(state_dir / "journal.tmp");
+    RemoveMarkers(state_dir);
+    fs::remove(state_dir / "fresh");
+    fs::remove(state_dir / "complete");
+}
+
 void RunImport(const Plan& plan, const Prepare& prepare) {
     CheckStateLocation(plan);
     const MigrationLock lock{plan.state_dir};

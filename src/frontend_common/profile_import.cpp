@@ -82,22 +82,17 @@ std::string TakeProfileImportRequest() {
         std::ifstream file{request};
         text.assign(std::istreambuf_iterator<char>{file}, {});
     }
-    fs::remove(request, ec);
     // The first line names the folder; v5.8.2 adds what to copy on the next lines.
     const std::string folder = text.substr(0, text.find('\n'));
     constexpr std::array known{"eden", "fritchii", "fritchii-portable", "superbuild-portable", "yuzu", "suyu", "sudachi", "citron"};
     if (std::ranges::find(known, folder) == known.end()) {
+        fs::remove(request, ec);
         return {};
     }
     // The Fritchii that asked is closing: let it finish writing its config first.
     std::this_thread::sleep_for(std::chrono::seconds{2});
-    if (Migration::GetState(state) == Migration::State::Pending) {
-        Migration::Recover(state);
-    }
-    // Forget the earlier import's outcome (its lock file stays) so RunImport runs again.
-    for (const char* name : {"complete", "fresh"}) {
-        fs::remove(state / name, ec);
-    }
+    Migration::PrepareAnotherImport(state);
+    fs::remove(request);
     return text;
 #endif
 }

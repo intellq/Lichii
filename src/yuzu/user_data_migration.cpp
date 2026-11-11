@@ -382,8 +382,6 @@ ImportPlan PlanImport(const OldProfile& old, const ProfileImportChoice& choice) 
         if (!fs::is_directory(source)) {
             return;
         }
-        std::error_code ec;
-        fs::remove(target, ec); // an empty folder made before the import, not a backup
         result.plan.roots.push_back({source, target, strategy});
     };
     // v5.8.2: only the parts the player ticked (mods are off unless ticked).
