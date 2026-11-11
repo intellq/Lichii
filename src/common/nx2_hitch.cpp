@@ -10,6 +10,7 @@
 #include <fmt/format.h>
 
 #include "common/logging.h"
+#include "common/host_memory.h"
 #include "common/nx2_hitch.h"
 
 #ifdef _WIN32
@@ -46,12 +47,14 @@ struct Snapshot {
     u64 page_faults{};
     u64 user_us{};
     u64 kernel_us{};
+    u64 zero_filled{};
     size_t thread_count{};
     std::array<u64, MaxThreads> thread_us{};
 };
 
 Snapshot Take() {
     Snapshot snapshot;
+    snapshot.zero_filled = HostMemory::ZeroFilledBytes();
     for (size_t i = 0; i < Causes; ++i) {
         snapshot.ns[i] = g_counters.ns[i].load(std::memory_order_relaxed);
         snapshot.count[i] = g_counters.count[i].load(std::memory_order_relaxed);
@@ -211,7 +214,8 @@ void OnPresent(long long gap_us) {
                      "zero-page passes ended {:.1f} ms ({}), one running for {:.0f} ms, "
                      "file throttle {:.1f} ms ({}), file reads {:.1f} ms ({}), "
                      "host map/unmap/protect {:.1f}/{:.1f}/{:.1f} ms, "
-                     "new/repeated JIT {:.1f}/{:.1f} ms, page faults {}, CPU user/kernel {:.1f}/{:.1f} ms, "
+                     "new/repeated JIT {:.1f}/{:.1f} ms, page faults {}, zero-filled {} MiB, "
+                     "CPU user/kernel {:.1f}/{:.1f} ms, "
                      "busiest threads {}",
                      static_cast<double>(gap_us) / 1e3, ms(Cause::FullDrain),
                      n(Cause::FullDrain), ms(Cause::ReadBack), n(Cause::ReadBack),
@@ -220,6 +224,7 @@ void OnPresent(long long gap_us) {
                      ms(Cause::FileRead), n(Cause::FileRead), ms(Cause::HostMap),
                      ms(Cause::HostUnmap), ms(Cause::HostProtect), ms(Cause::Recompile),
                      ms(Cause::RecompileRepeat), now.page_faults - last.page_faults,
+                     (now.zero_filled - last.zero_filled) >> 20,
                      static_cast<double>(now.user_us - last.user_us) / 1e3,
                      static_cast<double>(now.kernel_us - last.kernel_us) / 1e3,
                      BusyThreads(last, now));
