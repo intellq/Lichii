@@ -707,6 +707,11 @@ void GpuSplit::ReportAcquire() {
     const u64 polls = take(stats.polls);
     const u64 acquire_polls = take(stats.acquire_polls);
     const u64 list_polls = take(stats.list_polls);
+    const u64 front_polls = take(stats.front_polls);
+    const u64 front_sleeps = take(stats.front_sleeps);
+    const u64 front_woken = take(stats.front_woken);
+    const u64 front_found_polling = take(stats.front_found_polling);
+    const u64 front_found_late = take(stats.front_found_late);
     const u64 early_publishes = take(stats.early_publishes);
     const u64 settles = take(stats.settles);
     const u64 back_waits = take(stats.back_waits);
@@ -722,6 +727,11 @@ void GpuSplit::ReportAcquire() {
              passed, by_queued, latched, drained, valve_drains, drain_operation, drain_settings,
              drain_word, drain_queued, polls, acquire_polls, list_polls, back_waits, back_sleeps,
              spin_ms, early_publishes, settles);
+    LOG_INFO(HW_GPU,
+             "GPU thread waits for suspended channels in 10 s: {} in hardware, {} in the OS, {} "
+             "ended by a wake; channels that moved without one: {} found while polling, {} "
+             "found late in the OS wait",
+             front_polls, front_sleeps, front_woken, front_found_polling, front_found_late);
     const u64 mismatches = take(stats.mismatches);
     const u64 unlanded = take(stats.unlanded);
     const u64 late = take(stats.late);
