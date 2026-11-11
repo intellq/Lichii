@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <atomic>
 #include <bit>
 #include <chrono>
@@ -2400,7 +2401,24 @@ namespace {
 /// Whether the driver keeps compiled pipelines in a cache of its own (the proprietary NVIDIA and
 /// AMD drivers, and RADV while Mesa's shader cache is on), where the preparation step leaves them.
 bool DriverCachesPipelines(const Device& device) {
-    return device.DriverCachesPipelines();
+    if (device.DriverCachesPipelines()) {
+        return true;
+    }
+    if (device.GetDriverID() != VK_DRIVER_ID_MESA_RADV) {
+        return false;
+    }
+    // Mesa's on-disk shader cache, unless turned off (Mesa reads 1/true/t/yes/y, any case).
+    const auto disabled = [](const char* name) {
+        const char* const value = std::getenv(name);
+        if (!value) {
+            return false;
+        }
+        std::string text{value};
+        std::ranges::transform(text, text.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text == "1" || text == "true" || text == "t" || text == "yes" || text == "y";
+    };
+    return !disabled("MESA_SHADER_CACHE_DISABLE") && !disabled("MESA_GLSL_CACHE_DISABLE");
 }
 } // Anonymous namespace
 
