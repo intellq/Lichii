@@ -30,6 +30,11 @@ struct LogFile {
 /// for `for_each`.
 [[nodiscard]] LogFile ReadLogFile(const std::filesystem::path& file, const ForEach& for_each = {});
 
+enum class SeedResult { Seeded, AlreadyPresent, NoSource, Busy, Failed };
+/// Seed a translator-specific log once from a shared log, without altering either existing log.
+[[nodiscard]] SeedResult SeedVariantLog(const std::filesystem::path& source,
+                                        const std::filesystem::path& destination);
+
 enum class WriteResult {
     Written,
     Busy,         ///< Another process holds the log's lock

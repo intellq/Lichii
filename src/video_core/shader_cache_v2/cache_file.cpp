@@ -14,6 +14,49 @@
 #include "video_core/shader_cache_v2/cache_file.h"
 
 namespace VideoCommon::ShaderCacheV2 {
+
+SeedResult SeedVariantLog(const std::filesystem::path& source,
+                          const std::filesystem::path& destination) {
+    namespace fs = std::filesystem;
+    if (source == destination) {
+        return SeedResult::Failed;
+    }
+    const Common::FS::FileLock destination_lock{PipelineCacheLockPath(destination),
+                                                 PipelineCacheLockWait};
+    if (!destination_lock.Held()) {
+        return destination_lock.Busy() ? SeedResult::Busy : SeedResult::Failed;
+    }
+    std::error_code error;
+    if (fs::exists(destination, error)) {
+        return SeedResult::AlreadyPresent;
+    }
+    if (error) {
+        return SeedResult::Failed;
+    }
+    const Common::FS::FileLock source_lock{PipelineCacheLockPath(source), PipelineCacheLockWait};
+    if (!source_lock.Held()) {
+        return source_lock.Busy() ? SeedResult::Busy : SeedResult::Failed;
+    }
+    if (!fs::exists(source, error)) {
+        return error ? SeedResult::Failed : SeedResult::NoSource;
+    }
+    if (!fs::is_regular_file(source, error) || error) {
+        return SeedResult::Failed;
+    }
+    auto temporary = destination;
+    temporary += ".seed.tmp";
+    fs::copy_file(source, temporary, fs::copy_options::overwrite_existing, error);
+    if (!error) {
+        fs::rename(temporary, destination, error);
+    }
+    if (error) {
+        std::error_code ignored;
+        fs::remove(temporary, ignored);
+        return SeedResult::Failed;
+    }
+    return SeedResult::Seeded;
+}
+
 namespace {
 
 using Common::FS::FileAccessMode;

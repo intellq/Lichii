@@ -281,6 +281,24 @@ constexpr std::array<Instruction, 3> ProgramCounterProgram{{
 
 } // Anonymous namespace
 
+TEST_CASE("Shader cache v2: translator variants seed once without replacing the original",
+          "[video_core][shader_cache_v2]") {
+    TempDir temp;
+    const auto source = temp.path / "shared.bin";
+    const auto variant = temp.path / "variant.bin";
+    CHECK(V2::SeedVariantLog(source, variant) == V2::SeedResult::NoSource);
+    CHECK_FALSE(std::filesystem::exists(variant));
+    const std::array<u8, 4> original{1, 2, 3, 4};
+    WriteAll(source, original);
+    REQUIRE(V2::SeedVariantLog(source, variant) == V2::SeedResult::Seeded);
+    CHECK(ReadAll(variant) == ReadAll(source));
+    const std::array<u8, 2> newer{5, 6};
+    WriteAll(source, newer);
+    CHECK(V2::SeedVariantLog(source, variant) == V2::SeedResult::AlreadyPresent);
+    CHECK(ReadAll(variant) == std::vector<u8>(original.begin(), original.end()));
+    CHECK(ReadAll(source) == std::vector<u8>(newer.begin(), newer.end()));
+}
+
 TEST_CASE("Shader cache v2: every kind of record reads back as written", "[video_core][shader_cache_v2]") {
     TestEnvironment fragment{Shader::Stage::Fragment};
     TestEnvironment compute{Shader::Stage::Compute};
