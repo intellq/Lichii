@@ -62,6 +62,7 @@
 #include <utility>
 
 #include "common/alignment.h"
+#include "common/nx2_hitch.h"
 #include "common/assert.h"
 #include "common/div_ceil.h"
 #include "common/free_region_manager.h"
@@ -1055,6 +1056,7 @@ void HostMemory::Swap(HostMemory& other) noexcept {
 }
 
 void HostMemory::Map(size_t virtual_offset, size_t host_offset, size_t length, MemoryPermission perms, bool separate_heap) {
+    const Nx2Hitch::Scope timed{Nx2Hitch::Cause::HostMap, length};
 #if !(defined(__OPENORBIS__) || defined(__managarm__))
     ASSERT(virtual_offset % PageAlignment == 0);
     ASSERT(host_offset % PageAlignment == 0);
@@ -1069,6 +1071,7 @@ void HostMemory::Map(size_t virtual_offset, size_t host_offset, size_t length, M
 }
 
 void HostMemory::Unmap(size_t virtual_offset, size_t length, bool separate_heap) {
+    const Nx2Hitch::Scope timed{Nx2Hitch::Cause::HostUnmap, length};
 #if !(defined(__OPENORBIS__) || defined(__managarm__))
     ASSERT(virtual_offset % PageAlignment == 0);
     ASSERT(length % PageAlignment == 0);
@@ -1081,6 +1084,7 @@ void HostMemory::Unmap(size_t virtual_offset, size_t length, bool separate_heap)
 }
 
 void HostMemory::Protect(size_t virtual_offset, size_t length, MemoryPermission perm) {
+    const Nx2Hitch::Scope timed{Nx2Hitch::Cause::HostProtect, length};
 #if !(defined(__OPENORBIS__) || defined(__managarm__))
     ASSERT(virtual_offset % PageAlignment == 0);
     ASSERT(length % PageAlignment == 0);

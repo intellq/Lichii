@@ -18,3 +18,10 @@ TEST_CASE("Hitch attribution only collects counters when requested", "[nx2_hitch
     CHECK(g_counters.count[index].load(std::memory_order_relaxed) == count_before + expected);
     CHECK(g_counters.ns[index].load(std::memory_order_relaxed) == ns_before + (expected ? 123 : 0));
 }
+
+TEST_CASE("Hitch attribution identifies repeated JIT compilation only when enabled", "[nx2_hitch]") {
+    using namespace Common::Nx2Hitch;
+    constexpr u64 block = 0x1234ABCDEF;
+    CHECK(CompileCause(block, 0) == Cause::Recompile);
+    CHECK(CompileCause(block, 1) == (Enabled() ? Cause::RecompileRepeat : Cause::Recompile));
+}

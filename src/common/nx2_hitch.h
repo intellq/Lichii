@@ -21,12 +21,20 @@ enum class Cause : u8 {
     ReadBack,     ///< guest reads of GPU-written memory (download + wait), any thread
     SaveData,     ///< save data writes, flushes and commits (fsp)
     ZeroTrim,     ///< zero-page passes that ended in the gap (their own thread)
+    FileThrottle,
+    FileRead,
+    HostMap,
+    HostUnmap,
+    HostProtect,
+    Recompile,
+    RecompileRepeat,
     Count,
 };
 
 struct Counters {
     std::array<std::atomic<u64>, static_cast<size_t>(Cause::Count)> ns{};
     std::array<std::atomic<u64>, static_cast<size_t>(Cause::Count)> count{};
+    std::array<std::atomic<u64>, static_cast<size_t>(Cause::Count)> amount{};
     /// steady_clock ns when the running zero-page pass began, 0 while none runs
     std::atomic<u64> zero_trim_since{};
 };
@@ -41,22 +49,26 @@ inline Counters g_counters;
                                 .count());
 }
 
-inline void Add(Cause cause, u64 ns) {
+inline void Add(Cause cause, u64 ns, u64 amount = 0) {
     if (!Enabled()) {
         return;
     }
     const auto i = static_cast<size_t>(cause);
     g_counters.ns[i].fetch_add(ns, std::memory_order_relaxed);
     g_counters.count[i].fetch_add(1, std::memory_order_relaxed);
+    if (amount != 0) {
+        g_counters.amount[i].fetch_add(amount, std::memory_order_relaxed);
+    }
 }
 
 /// Times its scope as `cause`.
 class Scope {
 public:
-    explicit Scope(Cause cause_) : cause{cause_}, begin{Enabled() ? NowNs() : 0} {}
+    explicit Scope(Cause cause_, u64 amount_ = 0)
+        : cause{cause_}, begin{Enabled() ? NowNs() : 0}, amount{amount_} {}
     ~Scope() {
         if (begin != 0) {
-            Add(cause, NowNs() - begin);
+            Add(cause, NowNs() - begin, amount);
         }
     }
     Scope(const Scope&) = delete;
@@ -65,7 +77,13 @@ public:
 private:
     Cause cause;
     u64 begin;
+    u64 amount;
 };
+
+/// Classifies on-demand compiles only while hitch diagnostics are enabled.
+[[nodiscard]] Cause CompileCause(u64 key, u32 core);
+/// Registers named threads for CPU attribution when diagnostics are requested.
+void RegisterThread(const char* name);
 
 inline void ZeroTrimBegin() {
     if (Enabled()) {

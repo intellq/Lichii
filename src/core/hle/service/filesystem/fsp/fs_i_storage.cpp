@@ -10,6 +10,7 @@
 #include <thread>
 
 #include "common/settings.h"
+#include "common/nx2_hitch.h"
 #include "core/file_sys/errors.h"
 #include "core/hle/service/cmif_serialization.h"
 #include "core/hle/service/filesystem/fsp/fs_i_storage.h"
@@ -47,6 +48,7 @@ Result IStorage::Read(
     if (throttle_enabled && !Settings::CurrentProgramIsSwitch2()) {
         const auto now = std::chrono::steady_clock::now();
         if (now < next_read_tick) {
+            const Common::Nx2Hitch::Scope timed{Common::Nx2Hitch::Cause::FileThrottle};
             std::this_thread::sleep_for(next_read_tick - now);
         }
         next_read_tick = std::chrono::steady_clock::now() +
@@ -56,6 +58,7 @@ Result IStorage::Read(
 
     // Read the data from the Storage backend
     const ReadTraceScope trace{ReadTraceSource::Storage, length};
+    const Common::Nx2Hitch::Scope timed{Common::Nx2Hitch::Cause::FileRead, length};
     backend->Read(out_bytes.data(), length, offset);
 
     R_SUCCEED();
