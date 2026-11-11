@@ -27,6 +27,7 @@
 
 #include "video_core/renderer_vulkan/renderer_vulkan.h"
 
+#include "common/fs/path_util.h"
 #include "common/assert.h"
 #include "common/dkb_frame_trace.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
@@ -51,6 +52,7 @@
 #include "video_core/renderer_vulkan/maxwell_to_vk.h"
 #include "video_core/renderer_vulkan/vk_ocarina_camera_motion.h"
 #include "video_core/renderer_vulkan/vk_fsr3_upscaler.h"
+#include "video_core/shader_cache_v2/stale_variants.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/renderer_vulkan/vk_streamline_dlss.h"
 #include "video_core/vulkan_common/streamline.h"
@@ -3677,6 +3679,11 @@ std::optional<FramebufferTextureInfo> RasterizerVulkan::AccelerateDisplay(
 
 void RasterizerVulkan::LoadDiskResources(u64 title_id, std::stop_token stop_loading,
                                          const VideoCore::DiskResourceLoadCallback& callback) {
+    if (title_id != 0) {
+        VideoCommon::ShaderCacheV2::NormalizeShaderFiles(
+            Common::FS::GetEdenPath(Common::FS::EdenPath::ShaderDir) /
+            fmt::format("{:016x}", title_id));
+    }
     pipeline_cache.LoadDiskResources(title_id, stop_loading, callback);
 }
 

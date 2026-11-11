@@ -312,6 +312,8 @@ add_library(video_core STATIC
     shader_cache_v2/payload_io.h
     shader_cache_v2/records.cpp
     shader_cache_v2/records.h
+    shader_cache_v2/stale_variants.cpp
+    shader_cache_v2/stale_variants.h
     shader_environment.cpp
     shader_environment.h
     evicted_pointer_slots.h

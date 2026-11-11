@@ -303,8 +303,9 @@ fs::path WarmMarkerPath(const fs::path& warm_file) {
     return marker;
 }
 
-fs::path WarmVariantPath(const fs::path& warm_file, u64 variant) {
-    return warm_file.parent_path() / fmt::format("warm-compute-{:#x}.bin", variant);
+fs::path WarmVariantPath(const fs::path& warm_file, u64 /*variant*/) {
+    // One marker per file: the variant is written inside it (WarmStamp::variant).
+    return warm_file;
 }
 
 fs::path WarmCountPath(const fs::path& warm_file) {
@@ -361,9 +362,13 @@ bool WriteWarmMarker(const fs::path& warm_file, const WarmStamp& stamp) {
 
 bool WarmPending(u64 title_id) {
     const auto file = ComputeWarmPath(title_id);
-    const auto marker_file = WarmVariantPath(file, ShaderCacheV2::PrecompiledShaderStamp);
     std::error_code ec;
-    return !fs::exists(file, ec) || !fs::exists(WarmMarkerPath(marker_file), ec);
+    if (!fs::exists(file, ec)) {
+        return true;
+    }
+    // The marker is this build's only when it holds this build's shader stamp.
+    const auto marker = ReadWarmMarker(WarmVariantPath(file, ShaderCacheV2::PrecompiledShaderStamp));
+    return !marker || marker->variant != ShaderCacheV2::PrecompiledShaderStamp;
 }
 
 void RequestWarmBeforeStart(bool before_start) {

@@ -1256,17 +1256,9 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         return;
     }
     namespace CacheV2 = VideoCommon::ShaderCacheV2;
-    // Different translator revisions otherwise replace each other's program records on every
-    // switch. Seed the new log once, while continuing to share the Vulkan driver cache.
-    const auto shared_log = base_dir / CacheV2::FileName;
-    pipeline_cache_filename = base_dir /
-        fmt::format("lichii-cache.v2-lowering-{:#x}.bin", CacheV2::LoweringStamp());
-    const auto seed = CacheV2::SeedVariantLog(shared_log, pipeline_cache_filename);
-    if (seed == CacheV2::SeedResult::Seeded) {
-        LOG_INFO(Render_Vulkan, "Seeded translator-specific shader records from the shared cache");
-    } else if (seed == CacheV2::SeedResult::Busy || seed == CacheV2::SeedResult::Failed) {
-        LOG_WARNING(Render_Vulkan, "Couldn't seed translator-specific shader records from the shared cache");
-    }
+    // One record log, under its plain name (ShaderCacheV2::NormalizeShaderFiles renamed this
+    // translator's log to it): records lowered by another translator are lowered again.
+    pipeline_cache_filename = base_dir / CacheV2::FileName;
     const auto migration =
         MigrateLegacyPipelineCache(base_dir, pipeline_cache_filename, MaxUsedPipelineAge(device));
     if (migration.version) {
@@ -2201,11 +2193,9 @@ void PipelineCache::PreparePrecompiled(u64 title_id, const std::filesystem::path
     // shader settings: the resolution scale is folded into the shaders (RescalingPass), and the
     // bloom fix, loop safety checks and debug renderer change their translation or SPIR-V.
     const auto stamp_path =
-        base_dir / fmt::format("precompiled_prepared.fork-v{}-shader-{:#x}.txt", CACHE_VERSION,
-                               VideoCommon::ShaderCacheV2::PrecompiledShaderStamp);
+        base_dir / fmt::format("precompiled_prepared.fork-v{}.txt", CACHE_VERSION);
     const auto infos_path =
-        base_dir / fmt::format("precompiled_infos.fork-v{}-shader-{:#x}.bin", CACHE_VERSION,
-                               VideoCommon::ShaderCacheV2::PrecompiledShaderStamp);
+        base_dir / fmt::format("precompiled_infos.fork-v{}.bin", CACHE_VERSION);
     const auto& resolution = Settings::values.resolution_info;
     const bool radv_vulkan_cache =
         use_vulkan_pipeline_cache && device.GetDriverID() == VK_DRIVER_ID_MESA_RADV;
