@@ -4,7 +4,11 @@
 // SPDX-FileCopyrightText: 2016 Citra Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <memory>
+#include <QMainWindow>
+#include <QScreen>
+#include <QStatusBar>
 #include "common/logging.h"
 #include "common/settings.h"
 #include "common/settings_enums.h"
@@ -32,6 +36,52 @@
 #include "yuzu/configuration/configure_web.h"
 #include "yuzu/configuration/linux_scrollable_page.h"
 #include "yuzu/hotkeys.h"
+
+namespace {
+
+// Keeps the dialog's opening height as its minimum (or the screen's, when that is shorter) and
+// stretches it over the emulator window, from that window's top down to its status bar.
+void FitToMainWindow(QDialog* dialog, QWidget* parent) {
+    const int opening_height = dialog->height();
+    QWidget* main = parent ? parent->window() : nullptr;
+    QScreen* screen = main ? main->screen() : dialog->screen();
+    const QRect available = screen ? screen->availableGeometry() : QRect{};
+    dialog->setMinimumHeight(available.isValid() ? std::min(opening_height, available.height())
+                                                 : opening_height);
+    if (!main || !main->isVisible()) {
+        return;
+    }
+    // The main window's client area. The dialog's frame goes where the main window's does, and
+    // its title bar is taken to be as tall as the main window's.
+    const QRect client = main->geometry();
+    const int title_height = client.top() - main->frameGeometry().top();
+    int bottom = client.bottom();
+    if (auto* main_window = qobject_cast<QMainWindow*>(main)) {
+        const QStatusBar* status_bar = main_window->statusBar();
+        if (status_bar && status_bar->isVisible()) {
+            bottom = status_bar->mapToGlobal(QPoint{0, 0}).y() - 1;
+        }
+    }
+    int frame_top = main->frameGeometry().top();
+    if (available.isValid()) {
+        frame_top = std::max(frame_top, available.top());
+        bottom = std::min(bottom, available.bottom());
+    }
+    const int height = bottom - (frame_top + title_height) + 1;
+    if (height <= opening_height) {
+        return;
+    }
+    dialog->resize(dialog->width(), height);
+    int left = client.center().x() - dialog->width() / 2;
+    if (available.isValid()) {
+        left = std::clamp(left, available.left(),
+                          std::max(available.left(), available.right() + 1 - dialog->width()));
+    }
+    // move() places the frame, title bar included.
+    dialog->move(left, frame_top);
+}
+
+} // namespace
 
 ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
                                  InputCommon::InputSubsystem* input_subsystem,
@@ -125,6 +175,7 @@ ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
     }
 
     adjustSize();
+    FitToMainWindow(this, parent);
     ui->selectorList->setCurrentRow(0);
 
     // Selects the leftmost button on the bottom bar (Cancel as of writing)
