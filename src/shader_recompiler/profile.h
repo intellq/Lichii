@@ -33,6 +33,8 @@ struct Profile {
     /// fp16 and fp64 float controls must be set identically (independence 32_BIT_ONLY), and the
     /// device supports the fp64 counterparts of the fp16 modes above.
     bool fp16_float_controls_shared_with_fp64{};
+    /// fp16 float controls can differ from fp32 ones (neither independence is NONE).
+    bool fp16_float_controls_independent_of_fp32{};
     bool support_fp64_rounding_rte{};
     bool support_fp64_denorm_preserve{};
     bool support_fp32_denorm_preserve{};

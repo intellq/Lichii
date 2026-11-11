@@ -721,6 +721,9 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
                 VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_32_BIT_ONLY ||
             float_control.roundingModeIndependence ==
                 VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_32_BIT_ONLY,
+        .fp16_float_controls_independent_of_fp32 =
+            float_control.denormBehaviorIndependence != VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE &&
+            float_control.roundingModeIndependence != VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE,
         .support_fp64_rounding_rte = float_control.shaderRoundingModeRTEFloat64 != VK_FALSE,
         .support_fp64_denorm_preserve = float_control.shaderDenormPreserveFloat64 != VK_FALSE,
         .support_fp32_denorm_preserve = float_control.shaderDenormPreserveFloat32 != VK_FALSE,

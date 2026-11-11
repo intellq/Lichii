@@ -208,7 +208,7 @@ namespace {
 bool CanRoundHalfNatively(const Profile& profile, const Info& info) {
     if (!profile.support_float_controls || profile.has_broken_fp16_float_controls ||
         !profile.support_fp16_rounding_rte || !profile.support_fp16_denorm_preserve ||
-        info.uses_fp16_denorms_flush) {
+        !profile.fp16_float_controls_independent_of_fp32 || info.uses_fp16_denorms_flush) {
         return false;
     }
     if (profile.support_separate_denorm_behavior && profile.support_separate_rounding_mode) {
