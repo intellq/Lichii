@@ -1057,6 +1057,9 @@ void HostMemory::Swap(HostMemory& other) noexcept {
 
 void HostMemory::Map(size_t virtual_offset, size_t host_offset, size_t length, MemoryPermission perms, bool separate_heap) {
     const Nx2Hitch::Scope timed{Nx2Hitch::Cause::HostMap, length};
+#ifdef _WIN32
+    Nx2Hitch::RecordHostActivity(length);
+#endif
 #if !(defined(__OPENORBIS__) || defined(__managarm__))
     ASSERT(virtual_offset % PageAlignment == 0);
     ASSERT(host_offset % PageAlignment == 0);
@@ -1072,6 +1075,9 @@ void HostMemory::Map(size_t virtual_offset, size_t host_offset, size_t length, M
 
 void HostMemory::Unmap(size_t virtual_offset, size_t length, bool separate_heap) {
     const Nx2Hitch::Scope timed{Nx2Hitch::Cause::HostUnmap, length};
+#ifdef _WIN32
+    Nx2Hitch::RecordHostActivity(length);
+#endif
 #if !(defined(__OPENORBIS__) || defined(__managarm__))
     ASSERT(virtual_offset % PageAlignment == 0);
     ASSERT(length % PageAlignment == 0);
@@ -1085,6 +1091,9 @@ void HostMemory::Unmap(size_t virtual_offset, size_t length, bool separate_heap)
 
 void HostMemory::Protect(size_t virtual_offset, size_t length, MemoryPermission perm) {
     const Nx2Hitch::Scope timed{Nx2Hitch::Cause::HostProtect, length};
+#ifdef _WIN32
+    Nx2Hitch::RecordHostActivity(length);
+#endif
 #if !(defined(__OPENORBIS__) || defined(__managarm__))
     ASSERT(virtual_offset % PageAlignment == 0);
     ASSERT(length % PageAlignment == 0);

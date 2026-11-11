@@ -41,6 +41,14 @@ struct Counters {
 
 inline Counters g_counters;
 
+#ifdef _WIN32
+// The zero-page worker uses this even when hitch logging is disabled.
+inline std::atomic<u64> g_host_activity_bytes{};
+inline void RecordHostActivity(u64 bytes) {
+    g_host_activity_bytes.fetch_add(bytes, std::memory_order_relaxed);
+}
+#endif
+
 [[nodiscard]] bool Enabled();
 
 [[nodiscard]] inline u64 NowNs() {

@@ -40,7 +40,7 @@ DeviceMemory::~DeviceMemory() = default;
 #ifdef _WIN32
 // Windows can't punch holes in the guest memory section, so pages holding only zeros (games clear
 // their heaps while booting: Ocarina leaves ~7 GB) stay resident until they leave the working set.
-// A pass comes every 5 s while they keep turning up, backing off to once a minute.
+// A pass comes every 5 s while they keep turning up, backing off when little is trimmed.
 void DeviceMemory::TrimZeroPages(std::stop_token stop) {
     using namespace std::chrono_literals;
     Common::SetCurrentThreadName("ZeroTrim");
@@ -49,6 +49,11 @@ void DeviceMemory::TrimZeroPages(std::stop_token stop) {
     std::mutex mutex;
     std::condition_variable_any wake;
     std::chrono::seconds interval = 5s;
+    static const bool idle_timing = [] {
+        const char* value = std::getenv("EDEN_NX2_ZERO_TRIM_IDLE");
+        return value == nullptr || value[0] != '0';
+    }();
+    const std::chrono::seconds max_interval = idle_timing ? 300s : 60s;
     while (true) {
         {
             std::unique_lock lock{mutex};
@@ -56,6 +61,21 @@ void DeviceMemory::TrimZeroPages(std::stop_token stop) {
         }
         if (stop.stop_requested()) {
             return;
+        }
+        // Avoid scanning while the guest is mapping memory in bulk.
+        for (int attempt = 0; idle_timing && attempt < 10; ++attempt) {
+            const u64 before = Common::Nx2Hitch::g_host_activity_bytes.load(std::memory_order_relaxed);
+            {
+                std::unique_lock lock{mutex};
+                wake.wait_for(lock, stop, 500ms, [] { return false; });
+            }
+            if (stop.stop_requested()) {
+                return;
+            }
+            if (Common::Nx2Hitch::g_host_activity_bytes.load(std::memory_order_relaxed) - before <
+                (u64{32} << 20)) {
+                break;
+            }
         }
         const auto start = std::chrono::steady_clock::now();
         Common::Nx2Hitch::ZeroTrimBegin();
@@ -65,7 +85,7 @@ void DeviceMemory::TrimZeroPages(std::stop_token stop) {
                             std::chrono::steady_clock::now() - start)
                             .count();
         if (trimmed < Busy) {
-            interval = (std::min)(interval * 2, std::chrono::seconds{60});
+            interval = (std::min)(interval * 2, max_interval);
             continue;
         }
         interval = 5s;
