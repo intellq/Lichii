@@ -774,11 +774,11 @@ TEST_CASE("High refresh rate mode switches live between the two boot layouts",
         REQUIRE_FALSE(FileSys::OotHighRefreshScaleOffset(cut));
     }
 
-    SECTION("Its state (Dark's timer, the ripple slots, 0x4E9FE00..0x4E9FEA0) must lie in BSS") {
+    SECTION("Timer, ripple and audio state must fit in BSS") {
         REQUIRE(FileSys::OotHighRefreshStateInBss(0x4100000, 0x5100000));
-        REQUIRE(FileSys::OotHighRefreshStateInBss(0x4E9FE00, 0x4E9FEA0));
+        REQUIRE(FileSys::OotHighRefreshStateInBss(0x4E9FE00, 0x4E9FEA8));
         REQUIRE_FALSE(FileSys::OotHighRefreshStateInBss(0x4E9FE01, 0x5100000));
-        REQUIRE_FALSE(FileSys::OotHighRefreshStateInBss(0x4100000, 0x4E9FE17));
+        REQUIRE_FALSE(FileSys::OotHighRefreshStateInBss(0x4100000, 0x4E9FEA7));
         REQUIRE_FALSE(FileSys::OotHighRefreshStateInBss(0, 0));
     }
 }

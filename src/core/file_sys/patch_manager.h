@@ -163,7 +163,7 @@ enum class OotHighRefreshLayout {
 /// mode (its speed scale word kept), nullopt when it holds neither mode.
 [[nodiscard]] std::optional<OotHighRefreshCode> SwitchOotHighRefreshCode(
     const OotHighRefreshCode& code, bool on);
-/// Whether the high refresh routine's state (Dark's timer state and the water ripple slots) lies
+/// Whether the high refresh state (timer, water ripple and sound gate slots) lies
 /// in the module's BSS, [bss_start, bss_end) in module offsets.
 [[nodiscard]] bool OotHighRefreshStateInBss(u64 bss_start, u64 bss_end);
 
