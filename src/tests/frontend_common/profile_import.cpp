@@ -92,6 +92,26 @@ TEST_CASE("Move remaps every raw imported storage path before the source disappe
 }
 
 #if !defined(_WIN32) && !defined(__ANDROID__)
+TEST_CASE("Portable profile accepts an explicit Fritchii copy request", "[migration]") {
+    Fixture fixture;
+    const auto cwd = fs::current_path();
+    struct Restore {
+        fs::path cwd;
+        ~Restore() {
+            fs::current_path(cwd);
+            Common::FS::SetAppDirectory("");
+        }
+    } restore{cwd};
+    fs::current_path(fixture.root);
+    fs::create_directories(fixture.root / "user");
+    Common::FS::SetAppDirectory("");
+    REQUIRE(Common::FS::IsPortableMode());
+    const std::string request = "fritchii-portable\nsaves=1\nsettings=0\nmods=0\n";
+    RequestProfileImport(request);
+    CHECK(TakeProfileImportRequest() == request);
+    CHECK(TakeProfileImportRequest().empty());
+}
+
 TEST_CASE("CLI-first configuration is blocked and portable user stays untouched", "[migration]") {
     Fixture fixture;
     const auto cwd = fs::current_path();
