@@ -788,7 +788,7 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(MemoryLayout, Memory_6Gb, tr("6GB DRAM (Unsafe)")),
                               PAIR(MemoryLayout, Memory_8Gb, tr("8GB DRAM")),
                               PAIR(MemoryLayout, Memory_10Gb, tr("10GB DRAM (Unsafe)")),
-                              PAIR(MemoryLayout, Memory_12Gb, tr("12GB DRAM (Unsafe)")),
+                              PAIR(MemoryLayout, Memory_12Gb, tr("12GB DRAM (Switch 2)")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::ConsoleMode>::Index(),
                           {
