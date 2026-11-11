@@ -501,6 +501,38 @@ void RequireVulkanMemoryModel(const std::vector<u32>& code) {
 
 } // namespace
 
+TEST_CASE("Software HMMA uses native half rounding only with compatible float controls",
+          "[video_core][tensor][ampere]") {
+    TensorProgram fixture{1, 8};
+    fixture.profile.support_float_controls = true;
+    fixture.profile.support_fp16_rounding_rte = true;
+    fixture.profile.support_fp16_denorm_preserve = true;
+    fixture.profile.fp16_float_controls_independent_of_fp32 = true;
+    fixture.profile.support_separate_denorm_behavior = true;
+    fixture.profile.support_separate_rounding_mode = true;
+    SECTION("Supported controls emit native conversions and 16-bit modes") {
+        const auto code = fixture.Emit();
+        REQUIRE(HasCapability(code, CAPABILITY_FLOAT16));
+        REQUIRE(Instructions(code, 115).size() >= 2); // OpFConvert
+        const auto modes = Instructions(code, 16); // OpExecutionMode
+        const auto has_mode = [&](u32 mode) {
+            return std::ranges::any_of(modes, [=](const auto& words) {
+                return words.size() >= 3 && words[1] == mode && words[2] == 16;
+            });
+        };
+        REQUIRE(has_mode(4459)); // DenormPreserve
+        REQUIRE(has_mode(4462)); // RoundingModeRTE
+    }
+    SECTION("Controls shared with fp32 retain the software rounding path") {
+        fixture.profile.fp16_float_controls_independent_of_fp32 = false;
+        REQUIRE_FALSE(HasCapability(fixture.Emit(), CAPABILITY_FLOAT16));
+    }
+    SECTION("Guest flush-to-zero retains the software rounding path") {
+        fixture.program.info.uses_fp16_denorms_flush = true;
+        REQUIRE_FALSE(HasCapability(fixture.Emit(), CAPABILITY_FLOAT16));
+    }
+}
+
 TEST_CASE("Cooperative HMMA replaces the K16 software helper", "[video_core][tensor][ampere]") {
     TensorProgram fixture{3, 16};
     fixture.profile.support_cooperative_hmma = true;
