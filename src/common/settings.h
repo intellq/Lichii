@@ -727,10 +727,8 @@ struct Values {
                                                 Category::RendererAdvanced};
 
     // Ocarina of Time: present at 30 fps for lower-end PCs (nx2_gsv.h PaceToVblank). The game's
-    // timing follows real time (Dynamic FPS by Dark), so it keeps full speed. Asked once at the
-    // first launch (oot_fps_asked).
+    // timing follows real time (Dynamic FPS by Dark), so it keeps full speed.
     SwitchableSetting<bool> oot_30fps{linkage, false, "oot_30fps", Category::RendererAdvanced};
-    Setting<bool> oot_fps_asked{linkage, false, "oot_fps_asked", Category::RendererAdvanced};
     // Ocarina of Time above 60 fps (experimental, off by default): the "High refresh rate
     // (built-in)" patch makes the game's step always follow real time, below 1.0 too, and the
     // present pacing (nx2_gsv.h PaceToVblank) caps it at oot_high_refresh_cap instead of 60.
