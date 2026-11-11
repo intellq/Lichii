@@ -90,13 +90,10 @@ bool WarmPending(u64 title_id);
 void RequestWarmBeforeStart(bool before_start);
 bool TakeWarmBeforeStart();
 
-/// Skip button of the loading screen: the running precompiled preparation or precache stops after
-/// its current builds and the game starts. Taken (and cleared) by the precache; the preparation
-/// only reads it, so a skip pressed there skips the precache too.
+/// Skip button of the loading screen: the running precache stops after its current builds and the
+/// game starts. Taken (and cleared) by the renderer.
 void RequestSkipWarm();
 bool TakeSkipWarm();
-bool SkipWarmRequested();
-void ClearSkipWarm();
 
 /// The GPU driver, device and pipeline cache version pipelines were precached for.
 struct DriverStamp {
