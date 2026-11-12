@@ -1143,6 +1143,9 @@ private:
                                  "their writes in host memory until memory is freed",
                         start);
         }
+        // The guest may have freed memory since the last fill failed: FillReserve tries again for
+        // this block, so kept writes only pile up while the pool really has none.
+        m_reserve_exhausted = false;
         region.blocks[block] = BlockDeferred;
         Nvidia::Devices::Nx2GpuMemoryRegistry::Get().KeepSparseWrites(block_address, block_size);
         Tegra::Nx2SparseBlockWritten(start, block);
