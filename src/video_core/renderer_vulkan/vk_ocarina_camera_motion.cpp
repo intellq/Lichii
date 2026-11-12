@@ -12,6 +12,7 @@
 #include "common/logging.h"
 #include "common/settings.h"
 #include "video_core/fsr.h"
+#include "video_core/upscaler_status.h"
 #include "video_core/renderer_vulkan/vk_compute_pass.h"
 #include "video_core/renderer_vulkan/vk_fsr3_upscaler.h"
 #include "video_core/renderer_vulkan/vk_fsr4_upscaler.h"
@@ -730,6 +731,16 @@ struct OcarinaUpscaler::Impl {
         }
         fsr = std::make_unique<Fsr3Upscaler>(device, scheduler, allocator, staging, pool_, queue,
                                            Fsr3Upscaler::Profile::OcarinaLdr);
+        // Started with FSR 4: the status bar can switch to FSR 3.1 or the game's upscaler.
+        if (fsr4) {
+            VideoCore::upscaler_choice = VideoCore::UpscalerChoice::Fsr4;
+            VideoCore::upscaler_cycle_available = true;
+        }
+    }
+
+    ~Impl() {
+        VideoCore::upscaler_cycle_available = false;
+        VideoCore::upscaler_choice = VideoCore::UpscalerChoice::Fsr4;
     }
 
     const Device& device;
@@ -749,7 +760,9 @@ struct OcarinaUpscaler::Impl {
     std::optional<std::chrono::steady_clock::time_point> last_evaluation;
 
     bool UsesFsr4() const {
-        return fsr4 && !fsr4->Failed();
+        return fsr4 && !fsr4->Failed() &&
+               VideoCore::upscaler_choice.load(std::memory_order_relaxed) ==
+                   VideoCore::UpscalerChoice::Fsr4;
     }
 
     bool Failed() const {
@@ -1039,7 +1052,8 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
             .render_size = extent,
             .upscale_size = output_extent,
             .frame_time_ms = elapsed,
-            .reset = reset || elapsed > 250.0f,
+            // Taking over from FSR 3.1 (status bar): FSR 4 has no history of its frames.
+            .reset = reset || elapsed > 250.0f || !state.output_fsr4,
             .sharpen = sharpness > 0.0f,
             .sharpness = sharpness,
             .vertical_fov = 2.0f * std::atan(1.0f / projection_y),

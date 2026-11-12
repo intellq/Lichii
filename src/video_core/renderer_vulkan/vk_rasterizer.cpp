@@ -80,6 +80,7 @@
 #include "video_core/nx2_debug_control.h"
 #include "video_core/nx2_fast_draw.h"
 #include "video_core/nx2_profile.h"
+#include "video_core/upscaler_status.h"
 
 namespace Vulkan {
 
@@ -3178,6 +3179,12 @@ void RasterizerVulkan::TracePendingCpuWrites(bool compute, std::span<const u64> 
 bool RasterizerVulkan::OcarinaTemporalEnabled() const {
     constexpr u64 ocarina_program = 0x0400486024DEC000ULL;
     if (program_id != ocarina_program || oot_live_failed) {
+        return false;
+    }
+    // The game's own upscaler chosen from the status bar for this session.
+    if (VideoCore::upscaler_cycle_available.load(std::memory_order_relaxed) &&
+        VideoCore::upscaler_choice.load(std::memory_order_relaxed) ==
+            VideoCore::UpscalerChoice::Game) {
         return false;
     }
     if (oot_backend) {

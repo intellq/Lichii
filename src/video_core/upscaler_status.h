@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <utility>
 
 #include "common/common_types.h"
@@ -29,6 +30,19 @@ struct UpscalerStatus {
     /// Why the game's own upscale drew the last frame, when the renderer knows (a literal)
     const char* fallback_reason{};
 };
+
+/// What draws Ocarina of Time's scene, chosen from the status bar for the session (not saved)
+enum class UpscalerChoice : u8 {
+    Fsr4,
+    Fsr3,
+    Game, ///< the game's own upscaler
+};
+
+/// True while the running game started with FSR 4: the status bar then cycles FSR 4, FSR 3.1 and
+/// the game's upscaler. Written by the renderer, read by the status bar.
+inline std::atomic<bool> upscaler_cycle_available{false};
+/// The status bar's choice, read by the renderer each frame. Back to FSR 4 when a game starts.
+inline std::atomic<UpscalerChoice> upscaler_choice{UpscalerChoice::Fsr4};
 
 /// Records one evaluation (from the thread that records the frame's commands).
 void NoteUpscale(UpscalerKind kind, u32 render_width, u32 render_height, u32 output_width,

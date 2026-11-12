@@ -1136,8 +1136,19 @@ void MainWindow::InitializeWidgets() {
     upscaler_status_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
     upscaler_status_button->setFocusPolicy(Qt::NoFocus);
     upscaler_status_button->setCheckable(true);
-    connect(upscaler_status_button, &QPushButton::clicked, this,
-            [this] { UpdateUpscalerButton(); });
+    connect(upscaler_status_button, &QPushButton::clicked, this, [this] {
+        // A game started with FSR 4: FSR 4 -> FSR 3.1 -> the game's upscaler, for this session.
+        if (emulation_running && VideoCore::upscaler_cycle_available.load()) {
+            using Choice = VideoCore::UpscalerChoice;
+            const Choice choice = VideoCore::upscaler_choice.load();
+            VideoCore::upscaler_choice = choice == Choice::Fsr4   ? Choice::Fsr3
+                                         : choice == Choice::Fsr3 ? Choice::Game
+                                                                  : Choice::Fsr4;
+            // The next stats tick tells what draws; until then the label names the choice.
+            upscaler_running = false;
+        }
+        UpdateUpscalerButton();
+    });
     UpdateUpscalerButton();
     statusBar()->insertPermanentWidget(0, upscaler_status_button);
 
@@ -5893,7 +5904,18 @@ void MainWindow::UpdateUpscalerButton() {
 #else
     const QString fsr4_name = tr("FSR 4");
 #endif
-    const QString fsr_name = fsr4_chosen ? fsr4_name : tr("FSR 3.1");
+    // Chosen from the status bar for this session, when the game started with FSR 4.
+    const bool cycle = emulation_running && VideoCore::upscaler_cycle_available.load();
+    const auto choice = VideoCore::upscaler_choice.load();
+    const QString cycle_hint =
+        cycle ? tr("\nClick to switch to %1 for this session.")
+                    .arg(choice == VideoCore::UpscalerChoice::Fsr4   ? tr("FSR 3.1")
+                         : choice == VideoCore::UpscalerChoice::Fsr3 ? tr("the game's upscaler")
+                                                                     : fsr4_name)
+              : QString();
+    const QString fsr_name =
+        cycle ? (choice == VideoCore::UpscalerChoice::Fsr3 ? tr("FSR 3.1") : fsr4_name)
+              : (fsr4_chosen ? fsr4_name : tr("FSR 3.1"));
     const QString sizes = tr("%1x%2 to %3x%4")
                               .arg(upscaler_render_width)
                               .arg(upscaler_render_height)
@@ -5911,7 +5933,14 @@ void MainWindow::UpdateUpscalerButton() {
         const QString running = fsr4 ? fsr4_name : tr("FSR 3.1");
         upscaler_status_button->setText(running);
         upscaler_status_button->setToolTip(
-            tr("%1 draws in place of the game's upscaler: %2.").arg(running, sizes));
+            tr("%1 draws in place of the game's upscaler: %2.").arg(running, sizes) + cycle_hint);
+        return;
+    }
+    if (cycle && choice == VideoCore::UpscalerChoice::Game) {
+        upscaler_status_button->setChecked(false);
+        upscaler_status_button->setText(tr("GAME UPSCALER"));
+        upscaler_status_button->setToolTip(
+            tr("The game's own upscaler draws, chosen here for this session.") + cycle_hint);
         return;
     }
     if (!dlss && !fsr) {
@@ -5961,7 +5990,7 @@ void MainWindow::UpdateUpscalerButton() {
         tooltip += tr("\nIn Ocarina of Time FSR runs in Docked mode, where the game draws at "
                       "2560x1440.");
     }
-    upscaler_status_button->setToolTip(tooltip);
+    upscaler_status_button->setToolTip(tooltip + cycle_hint);
 }
 
 void MainWindow::UpdateVolumeUI() {
