@@ -25,6 +25,7 @@
 class QPushButton;
 class QEvent;
 class QObject;
+class QCheckBox;
 class QComboBox;
 
 namespace Settings {
@@ -112,5 +113,7 @@ private:
     QWidget* api_widget;
     QComboBox* aspect_ratio_combobox;
     QComboBox* resolution_combobox;
-    QWidget* amd_fsr4_group{}; ///< The FSR 4 setting and AmdFsr4Panel
+    QWidget* amd_fsr4_panel{};             ///< Shown under the FSR setting with FSR 4 chosen
+    QCheckBox* fsr_checkbox{};             ///< Ocarina of Time FSR on or off
+    QComboBox* fsr_version_combobox{};     ///< FSR 4 or FSR 3.1
 };

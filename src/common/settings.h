@@ -442,7 +442,18 @@ struct Values {
                                                            Specialization::Default,
                                                            true,
                                                            true};
-    SwitchableSetting<bool> ocarina_fsr{linkage, false, "ocarina_fsr", Category::Renderer};
+    SwitchableSetting<bool> ocarina_fsr{
+        linkage, false, "ocarina_fsr", Category::Renderer, Specialization::Paired, true, false};
+    // FSR 4 (AMD's runtime on Windows, the fsr4-vk port on Linux) or FSR 3.1; FSR 3.1 takes over
+    // when FSR 4 can't run.
+    SwitchableSetting<OcarinaFsrVersion, true> ocarina_fsr_version{linkage,
+                                                                   OcarinaFsrVersion::Fsr4,
+                                                                   "ocarina_fsr_version",
+                                                                   Category::Renderer,
+                                                                   Specialization::Default,
+                                                                   true,
+                                                                   false,
+                                                                   &ocarina_fsr};
     SwitchableSetting<OcarinaFsrOutput, true> ocarina_fsr_output{linkage,
                                                                  OcarinaFsrOutput::Uhd4k,
                                                                  "ocarina_fsr_output",
@@ -450,8 +461,6 @@ struct Values {
                                                                  Specialization::Default,
                                                                  true,
                                                                  false};
-    // AMD FSR 4 in place of FSR 3.1 where FSR replaces a game's upscaler (Windows, AMD's driver).
-    SwitchableSetting<bool> amd_fsr4{linkage, false, "amd_fsr4", Category::Renderer};
     SwitchableSetting<AspectRatio, true> aspect_ratio{linkage,
                                                       AspectRatio::R16_9,
                                                       "aspect_ratio",

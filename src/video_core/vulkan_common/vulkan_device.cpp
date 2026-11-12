@@ -514,9 +514,11 @@ namespace {
 /// the emulator's shaders use neither for it.
 bool WantsAmdFsr4(VkDriverId driver_id) {
 #ifdef _WIN32
-    return driver_id == VK_DRIVER_ID_AMD_PROPRIETARY && Settings::values.amd_fsr4.GetValue();
+    return driver_id == VK_DRIVER_ID_AMD_PROPRIETARY &&
+           Settings::values.ocarina_fsr_version.GetValue() == Settings::OcarinaFsrVersion::Fsr4;
 #elif defined(__linux__) && !defined(__ANDROID__)
-    return driver_id == VK_DRIVER_ID_MESA_RADV && Settings::values.amd_fsr4.GetValue();
+    return driver_id == VK_DRIVER_ID_MESA_RADV &&
+           Settings::values.ocarina_fsr_version.GetValue() == Settings::OcarinaFsrVersion::Fsr4;
 #else
     return false;
 #endif

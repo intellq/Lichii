@@ -5885,9 +5885,15 @@ void MainWindow::UpdateFrameGenButton() {
 
 void MainWindow::UpdateUpscalerButton() {
     const bool dlss = Settings::values.nvidia_dlss.GetValue();
-    // FSR 4 runs in place of FSR 3.1, so turning it on alone also replaces the game's upscaler.
-    const bool fsr =
-        Settings::values.ocarina_fsr.GetValue() || Settings::values.amd_fsr4.GetValue();
+    const bool fsr = Settings::values.ocarina_fsr.GetValue();
+    const bool fsr4_chosen =
+        Settings::values.ocarina_fsr_version.GetValue() == Settings::OcarinaFsrVersion::Fsr4;
+#if defined(__linux__) && !defined(__ANDROID__)
+    const QString fsr4_name = tr("FSR 4.1.1");
+#else
+    const QString fsr4_name = tr("FSR 4");
+#endif
+    const QString fsr_name = fsr4_chosen ? fsr4_name : tr("FSR 3.1");
     const QString sizes = tr("%1x%2 to %3x%4")
                               .arg(upscaler_render_width)
                               .arg(upscaler_render_height)
@@ -5902,18 +5908,17 @@ void MainWindow::UpdateUpscalerButton() {
             return;
         }
         const bool fsr4 = upscaler_kind == VideoCore::UpscalerKind::Fsr4;
-        upscaler_status_button->setText(fsr4 ? tr("FSR 4") : tr("FSR 3.1"));
+        const QString running = fsr4 ? fsr4_name : tr("FSR 3.1");
+        upscaler_status_button->setText(running);
         upscaler_status_button->setToolTip(
-            (fsr4 ? tr("AMD FSR 4 draws in place of the game's upscaler: %1.")
-                  : tr("AMD FSR 3.1 draws in place of the game's upscaler: %1."))
-                .arg(sizes));
+            tr("%1 draws in place of the game's upscaler: %2.").arg(running, sizes));
         return;
     }
     if (!dlss && !fsr) {
         upscaler_status_button->setChecked(false);
         upscaler_status_button->setText(tr("GAME UPSCALER"));
         upscaler_status_button->setToolTip(
-            tr("The game's own upscaler draws. NVIDIA DLSS and AMD FSR 3.1 (Ocarina of Time) "
+            tr("The game's own upscaler draws. NVIDIA DLSS and FSR (Ocarina of Time) "
                "can replace it: they are turned on in the graphics settings and take effect "
                "when a game starts."));
         return;
@@ -5922,11 +5927,12 @@ void MainWindow::UpdateUpscalerButton() {
     const bool wants_dlss = dlss && (dlss_available || !emulation_running || !fsr);
     if (!emulation_running) {
         upscaler_status_button->setChecked(true);
-        upscaler_status_button->setText(wants_dlss ? tr("DLSS") : tr("FSR 3.1"));
+        upscaler_status_button->setText(wants_dlss ? tr("DLSS") : fsr_name);
         upscaler_status_button->setToolTip(
             wants_dlss ? tr("NVIDIA DLSS is on. Whether it runs shows here once a game starts.")
-                       : tr("AMD FSR 3.1 is on for Ocarina of Time. Whether it runs shows here "
-                            "once the game starts."));
+                       : tr("%1 is on for Ocarina of Time. Whether it runs shows here once the "
+                            "game starts.")
+                             .arg(fsr_name));
         return;
     }
     upscaler_status_button->setChecked(false);
@@ -5937,18 +5943,25 @@ void MainWindow::UpdateUpscalerButton() {
                "card and NVIDIA's files: see the graphics settings."));
         return;
     }
-    const QString name = wants_dlss ? tr("NVIDIA DLSS") : tr("AMD FSR 3.1");
-    upscaler_status_button->setText(wants_dlss ? tr("DLSS (IDLE)") : tr("FSR 3.1 (IDLE)"));
-    if (upscaler_fallback_reason != nullptr) {
-        upscaler_status_button->setToolTip(
-            tr("%1 is on but the game's own upscaler is drawing: %2.")
-                .arg(name, QString::fromLatin1(upscaler_fallback_reason)));
-        return;
+    // On but nothing replaced in the last half second. FSR waits (IDLE) in Docked mode for a scene
+    // it replaces; in Handheld mode it can't run, so the game's own upscaler is what draws.
+    const QString name = wants_dlss ? tr("NVIDIA DLSS") : fsr_name;
+    const bool fsr_can_run = wants_dlss || Settings::IsDockedMode();
+    upscaler_status_button->setText(fsr_can_run ? tr("%1 (IDLE)").arg(wants_dlss ? tr("DLSS")
+                                                                                : fsr_name)
+                                                : tr("GAME UPSCALER"));
+    QString tooltip =
+        upscaler_fallback_reason != nullptr
+            ? tr("%1 is on but the game's own upscaler is drawing: %2.")
+                  .arg(name, QString::fromLatin1(upscaler_fallback_reason))
+            : tr("%1 is on but the game's own upscaler is drawing: this game or this scene has "
+                 "none it can replace.")
+                  .arg(name);
+    if (!fsr_can_run) {
+        tooltip += tr("\nIn Ocarina of Time FSR runs in Docked mode, where the game draws at "
+                      "2560x1440.");
     }
-    upscaler_status_button->setToolTip(
-        tr("%1 is on but replaced no upscaler in the last half second: this game or this scene "
-           "has none it can replace.")
-            .arg(name));
+    upscaler_status_button->setToolTip(tooltip);
 }
 
 void MainWindow::UpdateVolumeUI() {

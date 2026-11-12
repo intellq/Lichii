@@ -102,18 +102,7 @@ AmdFsr4Panel::AmdFsr4Panel(QWidget* parent) : QWidget(parent) {
     status_label->setWordWrap(true);
     status_row->addWidget(icon_label);
 #if defined(__linux__)
-    QLabel* about =
-        new QLabel(QStringLiteral("<a href=\"https://github.com/Astyyyyy/fsr4-vk\">%1</a>")
-                       .arg(Tr("About fsr4-vk")),
-                   this);
-    about->setOpenExternalLinks(true);
-    about->setToolTip(Tr("fsr4-vk on GitHub (GPL-3.0). Its licence and AMD's notice ship in the "
-                         "package's share/licenses/fsr4-vk folder."));
-    QVBoxLayout* text_column = new QVBoxLayout;
-    text_column->setSpacing(4);
-    text_column->addWidget(status_label);
-    text_column->addWidget(about);
-    status_row->addLayout(text_column, 1);
+    status_row->addWidget(status_label, 1);
     layout->addLayout(status_row);
     Refresh();
 }
@@ -164,9 +153,8 @@ void AmdFsr4Panel::Refresh() {
     icon_label->setText(ready ? QStringLiteral("<span style=\"color:#2ea043\">&#10004;</span>")
                               : QStringLiteral("<span style=\"color:#d29922\">&#9888;</span>"));
     status_label->setText(
-        ready ? Tr("<b>Ready.</b> Found fsr4-vk, the community Vulkan port of FSR 4 (not AMD's "
-                   "official FSR 4). It runs if the GPU and driver support it; otherwise FSR 3.1 "
-                   "does.")
+        ready ? Tr("Community port of FSR 4 for Vulkan. It runs if the GPU and driver support "
+                   "it; otherwise FSR 3.1 does.")
               : Tr("<b>Not in this build:</b> Lichii's Linux packages include fsr4-vk. For a "
                    "build without it, put %1 from fsr4-vk in the folder. Until then, FSR 3.1 is "
                    "used.")

@@ -250,10 +250,26 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Strength of RCAS (AMD's contrast-adaptive sharpening) on the upscaler used in place "
               "of a game's DLSS (AMD FSR 3.1); 0% turns it off.\nAlso sets the sharpening "
               "of the AMD FSR 1 and SGSR window adapting filters."));
-    INSERT(Settings, ocarina_fsr, tr("Use AMD FSR 3.1 upscaling in Ocarina of Time"),
+#if defined(__linux__) && !defined(__ANDROID__)
+    INSERT(Settings, ocarina_fsr_version, tr("FidelityFX Super Resolution (FSR)"),
            tr("Replaces Ocarina of Time's native upscaler using scene depth and camera motion. "
-              "Works on any supported Vulkan GPU. NVIDIA DLSS takes precedence when enabled and "
-              "available. RCAS Sharpness controls sharpening. Takes effect when a game starts."));
+              "NVIDIA DLSS takes precedence when enabled and available. RCAS Sharpness controls "
+              "sharpening.\nFSR 4.1.1 (vk): fsr4-vk, a community Vulkan port of AMD's ML-based "
+              "FSR 4.1.1 that Lichii's Linux packages include. It is not AMD's official FSR 4 and "
+              "is not affiliated with or endorsed by AMD. Radeon RX 6000 or newer, or an RDNA 3 "
+              "Ryzen GPU, on Mesa's RADV driver; RDNA 4 runs the FP8 network, older GPUs the INT8 "
+              "one. If FSR 4 can't run, FSR 3.1 is used and the log says why.\nFSR 3.1: works on "
+              "any supported Vulkan GPU.\nTakes effect when a game starts."));
+#else
+    INSERT(Settings, ocarina_fsr_version, tr("FidelityFX Super Resolution (FSR)"),
+           tr("Replaces Ocarina of Time's native upscaler using scene depth and camera motion. "
+              "NVIDIA DLSS takes precedence when enabled and available. RCAS Sharpness controls "
+              "sharpening.\nFSR 4: AMD's ML-based FSR 4. Radeon RX 6000 or newer, or a Ryzen AI "
+              "processor, with a current AMD driver. Needs AMD's FidelityFX runtime, which Lichii "
+              "downloads from AMD when you ask. The files are AMD's, under AMD's licence. Without "
+              "them, or if FSR 4 can't run, FSR 3.1 is used.\nFSR 3.1: works on any supported "
+              "Vulkan GPU.\nTakes effect when a game starts."));
+#endif
     INSERT(Settings, ocarina_fsr_output, tr("Ocarina of Time FSR output:"),
            tr("Size FSR writes Ocarina of Time's scene at before the game's HUD goes over it.\n"
               "3840x2160: as before; the window then scales the 4K image to its size.\n"
@@ -262,22 +278,6 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "so nothing scales it afterwards and fewer pixels are computed than at 4K.\n"
               "2560x1440: antialiasing only at the game's size; the window filter scales it.\n"
               "Takes effect when a game starts."));
-#if defined(__linux__) && !defined(__ANDROID__)
-    INSERT(Settings, amd_fsr4, tr("Use FSR 4 (fsr4-vk community Vulkan port) in place of FSR 3.1"),
-           tr("Uses fsr4-vk, a community Vulkan port of AMD's ML-based FSR 4.1.1 that Lichii's "
-              "Linux packages include, where FSR replaces a game's upscaler (Ocarina of Time with "
-              "the setting above). It is not AMD's official FSR 4 and is not affiliated with or "
-              "endorsed by AMD. Radeon RX 6000 or newer, or an RDNA 3 Ryzen GPU, on Mesa's RADV "
-              "driver; RDNA 4 runs the FP8 network, older GPUs the INT8 one.\nIf FSR 4 can't run, "
-              "FSR 3.1 is used and the log says why. Takes effect when a game starts."));
-#else
-    INSERT(Settings, amd_fsr4, tr("Use AMD FSR 4 in place of FSR 3.1"),
-           tr("Uses AMD's ML-based FSR 4 where FSR replaces a game's upscaler (Ocarina of Time "
-              "with the setting above). Radeon RX 6000 or newer, or a Ryzen AI processor, with a "
-              "current AMD driver.\nNeeds AMD's FidelityFX runtime, which Lichii downloads from "
-              "AMD when you ask. The files are AMD's, under AMD's licence. Without them, or if FSR 4 "
-              "can't run, FSR 3.1 is used. Takes effect when a game starts."));
-#endif
     INSERT(Settings, nvidia_dlss, tr("Use NVIDIA DLSS in place of a game's DLSS (experimental)"),
            tr("Uses NVIDIA DLSS on GeForce RTX cards in place of a Switch 2 game's own DLSS, "
               "instead of AMD FSR 3.1.\nNeeds NVIDIA's Streamline loader, and NVIDIA DLSS unless "
@@ -782,6 +782,15 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(OcarinaFsrOutput, Screen, tr("Size on screen")),
                               PAIR(OcarinaFsrOutput, AntiAliasing,
                                    tr("2560x1440 (antialiasing only)")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::OcarinaFsrVersion>::Index(),
+                          {
+#if defined(__linux__) && !defined(__ANDROID__)
+                              PAIR(OcarinaFsrVersion, Fsr4, tr("FSR 4.1.1 (vk)")),
+#else
+                              PAIR(OcarinaFsrVersion, Fsr4, tr("FSR 4")),
+#endif
+                              PAIR(OcarinaFsrVersion, Fsr31, tr("FSR 3.1")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::FrameGenType>::Index(),
                           {

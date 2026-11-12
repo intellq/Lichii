@@ -193,7 +193,7 @@ std::optional<Provider> FindFsr4(const FfxRuntime::Api& api, const Device& devic
 
 bool Fsr4Upscaler::IsWanted(const Device& device) {
 #if defined(__linux__) && !defined(__ANDROID__)
-    if (!Settings::values.amd_fsr4.GetValue()) {
+    if (Settings::values.ocarina_fsr_version.GetValue() != Settings::OcarinaFsrVersion::Fsr4) {
         return false;
     }
     const VideoCommon::Fsr4PortSupport support =
@@ -205,7 +205,7 @@ bool Fsr4Upscaler::IsWanted(const Device& device) {
     }
     return support.model.has_value();
 #else
-    return Settings::values.amd_fsr4.GetValue() &&
+    return Settings::values.ocarina_fsr_version.GetValue() == Settings::OcarinaFsrVersion::Fsr4 &&
            device.GetDriverID() == VK_DRIVER_ID_AMD_PROPRIETARY;
 #endif
 }

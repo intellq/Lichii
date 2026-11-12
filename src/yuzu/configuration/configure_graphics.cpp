@@ -239,12 +239,6 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
             continue;
         }
 #endif
-#if !defined(_WIN32) && !defined(__linux__)
-        // FSR 4 runs through AMD's runtime on Windows and the fsr4-vk port on Linux.
-        if (setting->Id() == Settings::values.amd_fsr4.Id()) {
-            continue;
-        }
-#endif
 
         ConfigurationShared::Widget* widget = [&]() {
             if (setting->Id() == Settings::values.hdr_reference_white.Id() ||
@@ -379,23 +373,29 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
             connect(widget->checkbox, &QCheckBox::toggled, panel, &QWidget::setVisible);
             hold_graphics.emplace(setting->Id(), group);
 #endif
-        } else if (setting->Id() == Settings::values.amd_fsr4.Id()) {
-            // AMD's files and a download button under the checkbox, shown for GPUs FSR 4 runs on.
-            amd_fsr4_group = new QWidget(this);
-            QVBoxLayout* group_layout = new QVBoxLayout(amd_fsr4_group);
+        } else if (setting->Id() == Settings::values.ocarina_fsr_version.Id()) {
+            // FSR on or off with its version, and FSR 4's status under them for GPUs it runs on.
+            QWidget* group = new QWidget(this);
+            QVBoxLayout* group_layout = new QVBoxLayout(group);
             group_layout->setContentsMargins(0, 0, 0, 0);
             group_layout->setSpacing(2);
             group_layout->addWidget(widget);
-            AmdFsr4Panel* panel = new AmdFsr4Panel(amd_fsr4_group);
-            group_layout->addWidget(panel);
-            panel->setVisible(widget->checkbox->isChecked());
-            connect(widget->checkbox, &QCheckBox::toggled, panel, &QWidget::setVisible);
-            hold_graphics.emplace(setting->Id(), amd_fsr4_group);
+            amd_fsr4_panel = new AmdFsr4Panel(group);
+            group_layout->addWidget(amd_fsr4_panel);
+            ocarina_fsr_checkbox = widget->checkbox;
+            fsr_checkbox = widget->checkbox;
+            fsr_version_combobox = widget->combobox;
+            if (fsr_checkbox != nullptr) {
+                connect(fsr_checkbox, &QCheckBox::toggled, this,
+                        [this] { UpdateAmdFsr4Visibility(); });
+            }
+            if (fsr_version_combobox != nullptr) {
+                connect(fsr_version_combobox, &QComboBox::currentIndexChanged, this,
+                        [this] { UpdateAmdFsr4Visibility(); });
+            }
+            hold_graphics.emplace(setting->Id(), group);
         } else if (setting->Id() == Settings::values.frame_gen.Id()) {
             frame_gen_checkbox = widget->checkbox;
-            hold_graphics.emplace(setting->Id(), widget);
-        } else if (setting->Id() == Settings::values.ocarina_fsr.Id()) {
-            ocarina_fsr_checkbox = widget->checkbox;
             hold_graphics.emplace(setting->Id(), widget);
         } else {
             hold_graphics.emplace(setting->Id(), widget);
@@ -583,11 +583,17 @@ void ConfigureGraphics::UpdateAPILayout() {
 }
 
 void ConfigureGraphics::UpdateAmdFsr4Visibility() {
-    if (amd_fsr4_group == nullptr) {
+    if (amd_fsr4_panel == nullptr) {
         return;
     }
+    // The combobox lists FSR 4 first.
+    const bool fsr4_chosen = (fsr_checkbox == nullptr || fsr_checkbox->isChecked()) &&
+                             fsr_version_combobox != nullptr &&
+                             fsr_version_combobox->currentIndex() ==
+                                 static_cast<int>(Settings::OcarinaFsrVersion::Fsr4);
     const int device = vulkan_device_combobox->currentIndex();
-    amd_fsr4_group->setVisible(GetCurrentGraphicsBackend() == Settings::RendererBackend::Vulkan &&
+    amd_fsr4_panel->setVisible(fsr4_chosen &&
+                               GetCurrentGraphicsBackend() == Settings::RendererBackend::Vulkan &&
                                device >= 0 && static_cast<size_t>(device) < records.size() &&
                                records[device].fsr4_capable);
 }
