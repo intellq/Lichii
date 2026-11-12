@@ -64,6 +64,7 @@
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_query_cache.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/ocarina_upscale.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
 #include "video_core/renderer_vulkan/vk_state_tracker.h"
@@ -3213,7 +3214,13 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, bool r
     const bool native_resolution =
         oot_backend == VideoCommon::OcarinaUpscaleBackend::Dlss &&
         Settings::GetNvidiaDlssRuntimeSettings().quality == Settings::NvidiaDlssQuality::Native;
-    const bool upscale_4k = pass_1440p && !native_resolution;
+    // FSR writes the scene at the chosen output (Settings ocarina_fsr_output) and the game's HUD is
+    // composited over it there; at the game's own 2560x1440 it only antialiases in place.
+    const auto output_choice = static_cast<unsigned>(Settings::values.ocarina_fsr_output.GetValue());
+    const auto fsr_output =
+        VideoCommon::OcarinaFsrOutputExtent(output_choice, VideoCommon::OcarinaScreenExtent());
+    const bool upscale_4k = pass_1440p && !native_resolution &&
+                            !(fsr_output == VideoCommon::OcarinaExtent{2560, 1440});
     const auto read_tic = [this](u32 index) -> std::optional<Tegra::Texture::TICEntry> {
         const auto& table = kepler_compute->regs.tic;
         using Entry = Tegra::Texture::TICEntry;
@@ -3343,7 +3350,8 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, bool r
             jitter = oot_jitter_offset;
         }
         const VkExtent2D output_extent = native_resolution ? extent
-                                         : upscale_4k      ? VkExtent2D{3840, 2160}
+                                         : upscale_4k      ? VkExtent2D{fsr_output.width,
+                                                                        fsr_output.height}
                                                            : target_extent;
         const bool recorded = oot_live_dlss->Record(color_view, depth.DepthView(), target_view,
                                                    extent, output_extent, target_extent, oot_motion.current,
@@ -3356,10 +3364,11 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, bool r
             oot_live_dlss->SaveSceneReference(scene_reference);
             oot_4k_scene_frame = render_trace_frame;
             oot_4k_guest_present = VK_NULL_HANDLE;
+            oot_output_extent = output_extent;
         }
         oot_dlss_frame = render_trace_frame;
-        // AMD's jitter phase count for FSR: 8 * (output / render width)^2, so 18 for 1440p -> 4K
-        // and 8 for native AA.
+        // AMD's jitter phase count for FSR: 8 * (output / render width)^2, so 18 for 1440p -> 4K,
+        // 14 for 1440p -> 3440x1440 and 8 for native AA.
         const f32 ratio = static_cast<f32>(output_extent.width) / static_cast<f32>(extent.width);
         oot_jitter_phases = std::max(1U, static_cast<u32>(8.0f * ratio * ratio));
         oot_fallback_reason = nullptr;
@@ -3662,14 +3671,15 @@ std::optional<FramebufferTextureInfo> RasterizerVulkan::AccelerateDisplay(
         image_view->format == VideoCore::Surface::PixelFormat::A8B8G8R8_UNORM &&
         !oot_live_dlss->EvaluationFailed() && !frame_dump.Capturing()) {
         try {
-            oot_live_dlss->Composite4k(info.image_view, render_trace_frame);
+            oot_live_dlss->Composite4k(info.image_view, render_trace_frame, oot_output_extent);
             info.image = oot_live_dlss->CompositedImage();
             info.image_view = oot_live_dlss->CompositedView();
-            info.scaled_width = 3840;
-            info.scaled_height = 2160;
+            info.scaled_width = oot_output_extent.width;
+            info.scaled_height = oot_output_extent.height;
             info.already_upscaled = true;
         } catch (const vk::Exception& error) {
-            LOG_WARNING(Render_Vulkan, "Ocarina temporal 4K presentation unavailable: {}", error.what());
+            LOG_WARNING(Render_Vulkan, "Ocarina temporal {}x{} presentation unavailable: {}",
+                        oot_output_extent.width, oot_output_extent.height, error.what());
             oot_live_failed = true;
             texture_cache_runtime.ocarina_fsr_failed = true; // samplers drop the FSR LOD bias
         }

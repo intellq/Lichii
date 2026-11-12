@@ -329,6 +329,7 @@ private:
     u32 oot_jitter_phases{8}; ///< Halton sequence length for the last FSR frame's scale
     std::optional<u64> oot_4k_scene_frame;
     VkImage oot_4k_guest_present{};
+    VkExtent2D oot_output_extent{3840, 2160}; ///< Size FSR wrote the last upscaled scene at
     std::optional<u64> oot_effects_frame;
     GPUVAddr oot_effects_address{};
     VkImageView oot_effects_scene{};

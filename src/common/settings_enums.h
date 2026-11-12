@@ -170,6 +170,9 @@ ENUM(GpuLogLevel, Off, Errors, Standard, Verbose, All)
 ENUM(GameListMode, TreeView, GridView, CarouselView);
 ENUM(SpeedMode, Standard, Turbo, Slow);
 ENUM(FrameGenType, Lsfg, Fsr3);
+// Size AMD FSR 3.1 writes Ocarina of Time's scene at (Settings ocarina_fsr_output): 4K, the size
+// the image takes on screen, or the game's 2560x1440 (antialiasing only).
+ENUM(OcarinaFsrOutput, Uhd4k, Screen, AntiAliasing);
 ENUM(MeshShaderMode, Automatic, Native, Compute);
 // Ocarina of Time's frame rate cap with its high refresh rate mode on (Settings oot_high_refresh).
 ENUM(OotRefreshCap, Display, Hz90, Hz120, Hz144, Hz165);

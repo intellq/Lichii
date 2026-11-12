@@ -33,6 +33,7 @@
 #include "video_core/renderer_vulkan/renderer_vulkan.h"
 #include "video_core/renderer_vulkan/vk_blit_screen.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/ocarina_upscale.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_state_tracker.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
@@ -220,6 +221,9 @@ try
     , frame_gen(memory_allocator, scheduler)
 #endif
 {
+    // Before the first frame: Ocarina's samplers take their FSR bias from it.
+    VideoCommon::SetOcarinaScreenExtent(render_window.GetFramebufferLayout().screen.GetWidth(),
+                                        render_window.GetFramebufferLayout().screen.GetHeight());
 
     if (Settings::values.renderer_force_max_clock.GetValue() && device.ShouldBoostClocks()) {
         turbo_mode.emplace(instance, dld);
@@ -288,8 +292,10 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     frame->color_space = output.color_space;
 
     scheduler.RequestOutsideRenderPassOperationContext();
-    blit_swapchain.DrawToFrame(device, rasterizer, frame, framebuffers,
-                              render_window.GetFramebufferLayout(),
+    const auto& present_layout = render_window.GetFramebufferLayout();
+    VideoCommon::SetOcarinaScreenExtent(present_layout.screen.GetWidth(),
+                                        present_layout.screen.GetHeight());
+    blit_swapchain.DrawToFrame(device, rasterizer, frame, framebuffers, present_layout,
                               present_manager.SwapchainImageCount(), output_format.format, output);
 
 #ifdef HAS_LSFG

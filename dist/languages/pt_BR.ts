@@ -221,6 +221,34 @@ Isto banirá tanto o nome de usuário como o endereço IP do fórum.</translatio
 <context>
     <name>ConfigurationShared</name>
     <message>
+        <source>Ocarina of Time FSR output:</source>
+        <translation>Saída do FSR no Ocarina of Time:</translation>
+    </message>
+    <message>
+        <source>Size FSR writes Ocarina of Time&apos;s scene at before the game&apos;s HUD goes over it.
+3840x2160: as before; the window then scales the 4K image to its size.
+Size on screen: the size the image takes in the window after the aspect ratio (3440x1440 with Stretch to Window on a 3440x1440 window, 2560x1440 with 16:9), so nothing scales it afterwards and fewer pixels are computed than at 4K.
+2560x1440: antialiasing only at the game&apos;s size; the window filter scales it.
+Takes effect when a game starts.</source>
+        <translation>Tamanho em que o FSR grava a cena do Ocarina of Time antes de o HUD do jogo ser aplicado por cima.
+3840x2160: como antes; depois a janela redimensiona a imagem 4K para o seu tamanho.
+Tamanho na tela: o tamanho que a imagem ocupa na janela depois da proporção (3440x1440 com Esticar à Janela numa janela de 3440x1440, 2560x1440 com 16:9), então nada a redimensiona depois e são calculados menos pixels que em 4K.
+2560x1440: só antialiasing no tamanho do jogo; o filtro de janela a redimensiona.
+Vale quando um jogo é iniciado.</translation>
+    </message>
+    <message>
+        <source>3840x2160 (4K)</source>
+        <translation>3840x2160 (4K)</translation>
+    </message>
+    <message>
+        <source>Size on screen</source>
+        <translation>Tamanho na tela</translation>
+    </message>
+    <message>
+        <source>2560x1440 (antialiasing only)</source>
+        <translation>2560x1440 (só antialiasing)</translation>
+    </message>
+    <message>
         <location filename="../../src/yuzu/configuration/shared_widget.cpp" line="67"/>
         <source>%</source>
         <translation>%</translation>

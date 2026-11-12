@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 #include "video_core/ocarina_upscale.h"
 #include "video_core/fsr.h"
 
@@ -47,4 +48,29 @@ TEST_CASE("FSR temporal sharpness uses the existing stops slider", "[video_core]
     CHECK(FSR::RcasSharpnessFromStops(2.0f) == 0.0f);
     CHECK(FSR::RcasSharpnessFromStops(3.0f) == 0.0f);
     CHECK(FSR::RcasSharpnessFromStops(-1.0f) == 1.0f);
+}
+
+TEST_CASE("OoT FSR output follows the choice and the size on screen", "[video_core][ocarina]") {
+    using VideoCommon::OcarinaExtent;
+    using VideoCommon::OcarinaFsrOutputExtent;
+    constexpr OcarinaExtent wide{3440, 1440};
+    CHECK(OcarinaFsrOutputExtent(0, wide) == OcarinaExtent{3840, 2160});
+    CHECK(OcarinaFsrOutputExtent(1, wide) == wide);
+    CHECK(OcarinaFsrOutputExtent(1, {2560, 1440}) == OcarinaExtent{2560, 1440});
+    CHECK(OcarinaFsrOutputExtent(2, wide) == OcarinaExtent{2560, 1440});
+    // A maximized window shorter than the scene: FSR never downscales an axis.
+    CHECK(OcarinaFsrOutputExtent(1, {3440, 1371}) == OcarinaExtent{3440, 1440});
+    CHECK(OcarinaFsrOutputExtent(1, {1280, 720}) == OcarinaExtent{2560, 1440});
+    CHECK(OcarinaFsrOutputExtent(1, {10000, 5000}) == OcarinaExtent{7680, 4320});
+    CHECK(OcarinaFsrOutputExtent(1, {}) == OcarinaExtent{3840, 2160});
+}
+
+TEST_CASE("OoT FSR texture LOD bias follows the output area", "[video_core][ocarina]") {
+    using enum VideoCommon::OcarinaUpscaleBackend;
+    using VideoCommon::OcarinaFsrLodBias;
+    CHECK(OcarinaFsrLodBias(Fsr, 2.25f) == Catch::Approx(-1.585f).margin(0.001f));
+    CHECK(OcarinaFsrLodBias(Fsr, 3440.0f / 2560.0f) == Catch::Approx(-1.213f).margin(0.001f));
+    CHECK(OcarinaFsrLodBias(Fsr, 1.0f) == -1.0f);
+    CHECK(OcarinaFsrLodBias(Dlss, 2.25f) == 0.0f);
+    CHECK(OcarinaFsrLodBias(Fsr, 0.0f) == 0.0f);
 }

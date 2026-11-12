@@ -29,6 +29,7 @@
 
 #include <atomic>
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
+#include "video_core/ocarina_upscale.h"
 #include "video_core/nx2.h"
 #include "video_core/nx2_debug_control.h"
 #include "video_core/render_trace.h"
@@ -4922,11 +4923,27 @@ void CustomBorderColorBudget::Release() noexcept {
     held = 0;
 }
 
+namespace {
+/// The bias for the output FSR writes at (Settings ocarina_fsr_output), from the size on screen
+/// when the game starts; resizing the window later keeps it.
+f32 OcarinaOutputLodBias(VideoCommon::OcarinaUpscaleBackend backend) {
+    const auto choice = static_cast<unsigned>(Settings::values.ocarina_fsr_output.GetValue());
+    const auto output =
+        VideoCommon::OcarinaFsrOutputExtent(choice, VideoCommon::OcarinaScreenExtent());
+    if (output == VideoCommon::OcarinaExtent{3840, 2160}) {
+        return VideoCommon::OcarinaFsrLodBias(backend);
+    }
+    const f32 area = static_cast<f32>(output.width) * static_cast<f32>(output.height) /
+                     (2560.0f * 1440.0f);
+    return VideoCommon::OcarinaFsrLodBias(backend, area);
+}
+} // Anonymous namespace
+
 f32 TextureCacheRuntime::OcarinaFsrLodBias() {
     if (!ocarina_fsr_lod_bias) {
         const bool ocarina = Settings::GetCurrentProgramID() == 0x0400486024DEC000ULL;
         ocarina_fsr_lod_bias =
-            ocarina ? VideoCommon::OcarinaFsrLodBias(ResolveOcarinaUpscaler(device)) : 0.0f;
+            ocarina ? OcarinaOutputLodBias(ResolveOcarinaUpscaler(device)) : 0.0f;
     }
     return *ocarina_fsr_lod_bias;
 }

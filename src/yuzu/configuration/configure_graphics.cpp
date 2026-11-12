@@ -222,6 +222,7 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
     std::map<u32, QWidget*> hold_graphics;
     std::vector<QWidget*> hold_api;
     QCheckBox* frame_gen_checkbox = nullptr;
+    QCheckBox* ocarina_fsr_checkbox = nullptr;
     QCheckBox* nvidia_dlss_checkbox = nullptr;
 
     for (const auto setting : Settings::values.linkage.by_category[Settings::Category::Renderer]) {
@@ -393,6 +394,9 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
         } else if (setting->Id() == Settings::values.frame_gen.Id()) {
             frame_gen_checkbox = widget->checkbox;
             hold_graphics.emplace(setting->Id(), widget);
+        } else if (setting->Id() == Settings::values.ocarina_fsr.Id()) {
+            ocarina_fsr_checkbox = widget->checkbox;
+            hold_graphics.emplace(setting->Id(), widget);
         } else {
             hold_graphics.emplace(setting->Id(), widget);
         }
@@ -403,6 +407,13 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
     }
 
     // Hide rather than disable, a disabled widget would read as using the global value
+    if (ocarina_fsr_checkbox != nullptr) {
+        if (const auto it = hold_graphics.find(Settings::values.ocarina_fsr_output.Id());
+            it != hold_graphics.end()) {
+            it->second->setVisible(ocarina_fsr_checkbox->isChecked());
+            connect(ocarina_fsr_checkbox, &QCheckBox::toggled, it->second, &QWidget::setVisible);
+        }
+    }
     if (frame_gen_checkbox != nullptr) {
         for (const u32 id : {Settings::values.frame_gen_type.Id(),
                              Settings::values.frame_gen_multiplier.Id(),

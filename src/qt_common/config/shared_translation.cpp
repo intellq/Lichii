@@ -199,6 +199,14 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Replaces Ocarina of Time's native upscaler using scene depth and camera motion. "
               "Works on any supported Vulkan GPU. NVIDIA DLSS takes precedence when enabled and "
               "available. RCAS Sharpness controls sharpening. Takes effect when a game starts."));
+    INSERT(Settings, ocarina_fsr_output, tr("Ocarina of Time FSR output:"),
+           tr("Size FSR writes Ocarina of Time's scene at before the game's HUD goes over it.\n"
+              "3840x2160: as before; the window then scales the 4K image to its size.\n"
+              "Size on screen: the size the image takes in the window after the aspect ratio "
+              "(3440x1440 with Stretch to Window on a 3440x1440 window, 2560x1440 with 16:9), "
+              "so nothing scales it afterwards and fewer pixels are computed than at 4K.\n"
+              "2560x1440: antialiasing only at the game's size; the window filter scales it.\n"
+              "Takes effect when a game starts."));
     INSERT(Settings, amd_fsr4, tr("Use AMD FSR 4 in place of FSR 3.1"),
            tr("Uses AMD's ML-based FSR 4 where FSR replaces a game's upscaler (Ocarina of Time "
               "with the setting above). Radeon RX 6000 or newer, or a Ryzen AI processor, with a "
@@ -664,6 +672,13 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
              PAIR(ResolutionSetup, Res7X, tr("7X (5040p/7560p)")),
              PAIR(ResolutionSetup, Res8X, tr("8X (5760p/8640p)")),
          }});
+    translations->insert({Settings::EnumMetadata<Settings::OcarinaFsrOutput>::Index(),
+                          {
+                              PAIR(OcarinaFsrOutput, Uhd4k, tr("3840x2160 (4K)")),
+                              PAIR(OcarinaFsrOutput, Screen, tr("Size on screen")),
+                              PAIR(OcarinaFsrOutput, AntiAliasing,
+                                   tr("2560x1440 (antialiasing only)")),
+                          }});
     translations->insert({Settings::EnumMetadata<Settings::FrameGenType>::Index(),
                           {
                               PAIR(FrameGenType, Lsfg, tr("Lossless Scaling (LSFG)")),
