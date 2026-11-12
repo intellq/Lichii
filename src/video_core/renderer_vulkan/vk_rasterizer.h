@@ -22,6 +22,7 @@
 #include "video_core/host1x/gpu_device_memory_manager.h"
 #include "video_core/oot_network.h"
 #include "video_core/ocarina_upscale.h"
+#include "video_core/upscaler_fallback_log.h"
 #include "video_core/rasterizer_interface.h"
 #include "video_core/renderer_vulkan/blit_image.h"
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
@@ -324,7 +325,14 @@ private:
     std::unique_ptr<class OcarinaUpscaler> oot_live_dlss;
     bool oot_live_failed{};
     std::atomic<const char*> oot_fallback_reason{}; ///< also read by the status bar
-    u32 oot_fallback_repeats{};
+    VideoCommon::UpscalerFallbackLog oot_fallback_log;
+    /// The furthest check this frame's scene draws reached without giving a camera, for the log.
+    struct OcarinaCameraMiss {
+        u64 frame{};
+        u32 rank{};
+        const char* reason{};
+        std::array<f32, 4> values{};
+    } oot_camera_miss;
     std::optional<u64> oot_dlss_frame;
     std::array<f32, 2> oot_jitter_applied{}; ///< in the viewport state now (render pixels)
     std::array<f32, 2> oot_jitter_offset{};  ///< what oot_jitter_frame's scene draws used
@@ -333,6 +341,7 @@ private:
     std::optional<u64> oot_4k_scene_frame;
     VkImage oot_4k_guest_present{};
     VkExtent2D oot_output_extent{3840, 2160}; ///< Size FSR wrote the last upscaled scene at
+    VideoCommon::UpscalerFallbackLog oot_4k_present_log;
     std::optional<u64> oot_effects_frame;
     GPUVAddr oot_effects_address{};
     VkImageView oot_effects_scene{};
