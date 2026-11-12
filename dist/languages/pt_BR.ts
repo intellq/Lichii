@@ -349,6 +349,14 @@ Isto banirá tanto o nome de usuário como o endereço IP do fórum.</translatio
         <translation>Roda a janela pelo XWayland (X11) em vez do Wayland nativo. Vale depois de reiniciar o Lichii.</translation>
     </message>
     <message>
+        <source>Detailed performance overlay</source>
+        <translation>HUD de desempenho detalhado</translation>
+    </message>
+    <message>
+        <source>Replaces the performance overlay with a framed panel in NX2navi's look. Its hotkey (F8) steps through it: an FPS counter, then the machine's load with the frame rate, its lows and the frame times, then the full panel with the GPU work per frame and the picture settings, then off.</source>
+        <translation>Troca o HUD de desempenho por um painel com moldura no visual do NX2navi. O atalho (F8) passa pelos níveis: contador de FPS, depois a carga da máquina com o FPS, os mínimos e os tempos de quadro, depois o painel completo com o trabalho da GPU por quadro e as configurações de imagem, e por fim desliga.</translation>
+    </message>
+    <message>
         <source>GPU thread waits in hardware</source>
         <translation>Espera da GPU em hardware</translation>
     </message>
@@ -11243,6 +11251,85 @@ Error code: %3</source>
         <location filename="../../src/yuzu/updater/update_dialog.cpp" line="173"/>
         <source>Successfully downloaded %1. Would you like to open it?</source>
         <translation type="unfinished"/>
+    </message>
+</context>
+<context>
+    <name>DetailedPerformanceOverlay</name>
+    <message>
+        <source>AMD FSR 1, sharpness %1%</source>
+        <translation>AMD FSR 1, nitidez %1%</translation>
+    </message>
+    <message>
+        <source>Off</source>
+        <translation>Desligado</translation>
+    </message>
+    <message>
+        <source>On</source>
+        <translation>Ligado</translation>
+    </message>
+    <message>
+        <source>%1 auto</source>
+        <translation>%1 automático</translation>
+    </message>
+    <message>
+        <source>1% low %1</source>
+        <translation>1% min. %1</translation>
+    </message>
+    <message>
+        <source>0.1% low %1</source>
+        <translation>0.1% min. %1</translation>
+    </message>
+    <message>
+        <source>max %1 ms</source>
+        <translation>máx. %1 ms</translation>
+    </message>
+    <message>
+        <source>Frame</source>
+        <translation>Quadro</translation>
+    </message>
+    <message>
+        <source>GPU frame prep</source>
+        <translation>Preparo de quadro da GPU</translation>
+    </message>
+    <message>
+        <source>Vulkan recording per frame</source>
+        <translation>Gravação Vulkan por quadro</translation>
+    </message>
+    <message>
+        <source>GPU busy per frame</source>
+        <translation>GPU ocupada por quadro</translation>
+    </message>
+    <message>
+        <source>Busiest game core per frame</source>
+        <translation>Núcleo do jogo mais ocupado</translation>
+    </message>
+    <message>
+        <source>Shaders building</source>
+        <translation>Shaders em compilação</translation>
+    </message>
+    <message>
+        <source>Window</source>
+        <translation>Janela</translation>
+    </message>
+    <message>
+        <source>Game image</source>
+        <translation>Imagem do jogo</translation>
+    </message>
+    <message>
+        <source>Speed limit</source>
+        <translation>Limite de velocidade</translation>
+    </message>
+    <message>
+        <source>Display</source>
+        <translation>Exibição</translation>
+    </message>
+    <message>
+        <source>Resolution</source>
+        <translation>Resolução</translation>
+    </message>
+    <message>
+        <source>HDR output</source>
+        <translation>Saída HDR</translation>
     </message>
 </context>
 </TS>

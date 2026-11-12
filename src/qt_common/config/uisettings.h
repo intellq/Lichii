@@ -226,6 +226,10 @@ struct Values {
 
     // perf overlay
     Setting<bool> show_perf_overlay{linkage, false, "show_perf_overlay", Category::UiGameList};
+    // The detailed overlay in place of the default one, and the level its hotkey last left it at
+    Setting<bool> perf_overlay_detailed{linkage, false, "perf_overlay_detailed",
+                                        Category::UiGeneral};
+    Setting<u8> perf_overlay_level{linkage, 1, "perf_overlay_level", Category::UiGameList};
 
     // Size & File Types Column
     Setting<bool> show_size{linkage, true, "show_size", Category::UiGameList};

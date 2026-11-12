@@ -64,6 +64,7 @@ class QSlider;
 class QHBoxLayout;
 class WaitTreeWidget;
 class PerformanceOverlay;
+class DetailedPerformanceOverlay;
 #ifdef HAS_RESHADE
 class ConfigurePostProcessing;
 #endif
@@ -190,6 +191,9 @@ public:
     [[nodiscard]] double FrameGenFps() const {
         return frame_gen_fps;
     }
+
+    /// The render window's size in physical pixels
+    [[nodiscard]] QSize RenderWindowPixelSize() const;
 
     /// What NVIDIA DLSS ran as since the last status bar update, empty when it didn't run
     [[nodiscard]] const QString& DlssStatusText() const {
@@ -425,6 +429,8 @@ private slots:
     void OnToggleFilterBar();
     void OnToggleStatusBar();
     void OnTogglePerfOverlay();
+    /// Shows the default or the detailed performance overlay, as the settings and the action say
+    void UpdatePerfOverlays();
 #ifdef HAS_RESHADE
     void OnPostProcessingShaders();
 #endif
@@ -552,6 +558,7 @@ private:
     QFutureWatcher<bool> nextendo_session_watcher;
     OverlayDialog* shutdown_dialog{};
     PerformanceOverlay* perf_overlay = nullptr;
+    DetailedPerformanceOverlay* detailed_perf_overlay = nullptr;
 #ifdef HAS_RESHADE
     ConfigurePostProcessing* post_processing_dialog = nullptr;
 #endif

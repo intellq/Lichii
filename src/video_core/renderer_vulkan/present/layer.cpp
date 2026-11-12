@@ -28,6 +28,7 @@
 #include "video_core/renderer_vulkan/present/util.h"
 #include "video_core/renderer_vulkan/vk_blit_screen.h"
 #include "video_core/textures/decoders.h"
+#include "video_core/upscaler_status.h"
 
 namespace Vulkan {
 
@@ -105,6 +106,10 @@ void Layer::ConfigureDraw(const Device& device, PresentPushConstants* out_push_c
     const bool is_applet =
         (framebuffer.layer_stack_mask & Service::Nvnflinger::LayerStackBit(
                                             Service::Nvnflinger::LayerStackId::Recording)) == 0;
+
+    if (!is_applet) {
+        VideoCore::NotePresentedImage(scaled_width, scaled_height);
+    }
 
     RefreshResources(device, framebuffer);
     if (!hdr_output) {

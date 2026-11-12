@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <utility>
+
 #include "common/common_types.h"
 
 namespace VideoCore {
@@ -34,5 +36,12 @@ void NoteUpscale(UpscalerKind kind, u32 render_width, u32 render_height, u32 out
 
 /// The evaluations so far and the last one's upscaler and sizes (from any thread).
 [[nodiscard]] UpscalerStatus LastUpscale() noexcept;
+
+/// Records the size of the game's image the presenter last drew to the window, after the
+/// resolution scaling (from the thread that records the frame's commands).
+void NotePresentedImage(u32 width, u32 height) noexcept;
+
+/// The last size NotePresentedImage recorded, {0, 0} before the first (from any thread).
+[[nodiscard]] std::pair<u32, u32> LastPresentedImage() noexcept;
 
 } // namespace VideoCore

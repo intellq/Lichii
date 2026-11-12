@@ -102,6 +102,11 @@ public:
         return std::nullopt;
     }
 
+    /// Device memory this process holds on the GPU, in bytes; nullopt when the driver doesn't say
+    [[nodiscard]] virtual std::optional<u64> GetProcessVramUsage() const {
+        return std::nullopt;
+    }
+
     /// The upscaler that replaces the game's own, what it last drew and how often so far
     [[nodiscard]] virtual UpscalerStatus GetUpscalerStatus() const {
         return LastUpscale();

@@ -600,6 +600,11 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Hides the mouse after 2.5s of inactivity."));
     INSERT(UISettings, check_for_updates, tr("Check for updates"),
            tr("Whether or not to check for updates upon startup."));
+    INSERT(UISettings, perf_overlay_detailed, tr("Detailed performance overlay"),
+           tr("Replaces the performance overlay with a framed panel in NX2navi's look. Its hotkey "
+              "(F8) steps through it: an FPS counter, then the machine's load with the frame rate, "
+              "its lows and the frame times, then the full panel with the GPU work per frame and "
+              "the picture settings, then off."));
 
     // Linux
     INSERT(UISettings, enable_gamemode, tr("Enable Gamemode"),

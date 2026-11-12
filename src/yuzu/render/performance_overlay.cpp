@@ -133,10 +133,12 @@ void PerformanceOverlay::updateStats(const Core::PerfStatsResults& results,
                                      const VideoCore::ShaderNotify& shaders) {
     auto& system = *QtCommon::system;
     auto& perf_stats = system.GetPerfStats();
-    perf_stats.SetFrameTimeHistoryEnabled(isVisible());
+    // Hidden, it leaves the history alone (hideEvent turned it off): the detailed overlay may be
+    // using it, and turning it back on clears it.
     if (!isVisible()) {
         return;
     }
+    perf_stats.SetFrameTimeHistoryEnabled(true);
 
     m_fps.reset();
     if (!std::isnan(results.average_game_fps)) {

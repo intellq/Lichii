@@ -21,6 +21,7 @@
 #include "common/settings_enums.h"
 #include "frontend_common/settings_generator.h"
 #include "frontend_common/profile_import.h"
+#include "render/detailed_performance_overlay.h"
 #include "render/performance_overlay.h"
 #ifdef HAS_RESHADE
 #include "configuration/configure_post_processing.h"
@@ -1509,8 +1510,7 @@ void MainWindow::RestoreUIState() {
 
     ui->action_Show_Performance_Overlay->setChecked(
         UISettings::values.show_perf_overlay.GetValue());
-    if (perf_overlay)
-        perf_overlay->setVisible(ui->action_Show_Performance_Overlay->isChecked());
+    UpdatePerfOverlays();
     Debugger::ToggleConsole();
 }
 
@@ -2499,6 +2499,11 @@ bool MainWindow::OnShutdownBegin() {
         perf_overlay->hide();
         perf_overlay->deleteLater();
         perf_overlay = nullptr;
+    }
+    if (detailed_perf_overlay) {
+        detailed_perf_overlay->hide();
+        detailed_perf_overlay->deleteLater();
+        detailed_perf_overlay = nullptr;
     }
 
     QtCommon::system->SetShuttingDown(true);
@@ -3752,7 +3757,10 @@ void MainWindow::OnLoadComplete() {
     loading_screen->OnLoadComplete();
 
     perf_overlay = new PerformanceOverlay(this);
-    perf_overlay->setVisible(ui->action_Show_Performance_Overlay->isChecked());
+    // After the default overlay, so its statsUpdated slot runs last and keeps the frame time
+    // history on while it shows.
+    detailed_perf_overlay = new DetailedPerformanceOverlay(this);
+    UpdatePerfOverlays();
 
     connect(perf_overlay, &PerformanceOverlay::closed, perf_overlay,
             [this]() { ui->action_Show_Performance_Overlay->setChecked(false); });
@@ -4225,6 +4233,7 @@ void MainWindow::OnConfigure() {
     }
 
     UpdateStatusButtons();
+    UpdatePerfOverlays();
     controller_dialog->refreshConfiguration();
     QtCommon::system->ApplySettings();
 
@@ -4641,8 +4650,40 @@ void MainWindow::OnToggleStatusBar() {
 }
 
 void MainWindow::OnTogglePerfOverlay() {
-    if (perf_overlay)
-        perf_overlay->setVisible(ui->action_Show_Performance_Overlay->isChecked());
+    // The detailed overlay steps through its levels: off, frame rate, machine and frames, full,
+    // then off again. The action unchecked itself on this press; it stays checked until the last.
+    if (UISettings::values.perf_overlay_detailed.GetValue()) {
+        auto& level = UISettings::values.perf_overlay_level;
+        if (ui->action_Show_Performance_Overlay->isChecked()) {
+            level = 1;
+        } else if (level.GetValue() < DetailedPerformanceOverlay::Levels) {
+            level = static_cast<u8>(level.GetValue() + 1);
+            const QSignalBlocker blocker{ui->action_Show_Performance_Overlay};
+            ui->action_Show_Performance_Overlay->setChecked(true);
+        }
+    }
+    UpdatePerfOverlays();
+}
+
+void MainWindow::UpdatePerfOverlays() {
+    const bool shown = ui->action_Show_Performance_Overlay->isChecked();
+    const bool detailed = UISettings::values.perf_overlay_detailed.GetValue();
+    if (perf_overlay) {
+        perf_overlay->setVisible(shown && !detailed);
+    }
+    if (detailed_perf_overlay) {
+        detailed_perf_overlay->SetLevel(UISettings::values.perf_overlay_level.GetValue());
+        detailed_perf_overlay->setVisible(shown && detailed);
+    }
+}
+
+QSize MainWindow::RenderWindowPixelSize() const {
+    if (!render_window) {
+        return {};
+    }
+    const qreal ratio = render_window->devicePixelRatioF();
+    return QSize{static_cast<int>(std::lround(render_window->width() * ratio)),
+                 static_cast<int>(std::lround(render_window->height() * ratio))};
 }
 
 #ifdef HAS_RESHADE

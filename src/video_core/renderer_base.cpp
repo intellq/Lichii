@@ -19,7 +19,17 @@ namespace {
 std::atomic<u64> upscale_evaluations{};
 std::atomic<u64> upscale_sizes{}; ///< 16 bits each: render width, height, output width, height
 std::atomic<UpscalerKind> upscale_kind{};
+std::atomic<u64> presented_image{}; ///< width in the high 32 bits, height in the low
 } // Anonymous namespace
+
+void NotePresentedImage(u32 width, u32 height) noexcept {
+    presented_image.store(u64{width} << 32 | height, std::memory_order_relaxed);
+}
+
+std::pair<u32, u32> LastPresentedImage() noexcept {
+    const u64 size = presented_image.load(std::memory_order_relaxed);
+    return {static_cast<u32>(size >> 32), static_cast<u32>(size)};
+}
 
 void NoteUpscale(UpscalerKind kind, u32 render_width, u32 render_height, u32 output_width,
                  u32 output_height) noexcept {

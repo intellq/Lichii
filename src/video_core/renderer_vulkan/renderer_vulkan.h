@@ -81,6 +81,13 @@ public:
         return scheduler.GpuBusyMs();
     }
 
+    [[nodiscard]] std::optional<u64> GetProcessVramUsage() const override {
+        if (!device.CanReportMemoryUsage()) {
+            return std::nullopt;
+        }
+        return device.GetDeviceMemoryUsage();
+    }
+
     // Enhanced platform-specific initialization
     void InitializePlatformSpecific();
 
