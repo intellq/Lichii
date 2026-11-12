@@ -52,16 +52,20 @@ struct HostTranslateInfo {
     u32 max_per_stage_resources = 64;
 };
 constexpr u32 DESCRIPTOR_MAX_COUNT = 1024;
-[[nodiscard]] bool IsDescriptorArray(const TextureBufferDescriptor& d) noexcept { return d.count > 1; }
-[[nodiscard]] bool IsDescriptorArray(const TextureDescriptor& d) noexcept {
-    return d.count > 1 || d.is_descriptor_array;
-}
+namespace {
 """
+for signature in (
+    "[[nodiscard]] bool IsDescriptorArray(const TextureBufferDescriptor&",
+    "[[nodiscard]] bool IsDescriptorArray(const TextureDescriptor&",
+):
+    if signature in source:
+        cpp += extract(source, signature) + "\n"
 cpp += "template <typename T>\n" + extract(source, "[[nodiscard]] u32 StaticDescriptorCount(")
 cpp += "\ntemplate <typename Descriptors>\n" + extract(info, "u32 NumDescriptors(")
 cpp += "\n" + extract(source, "u32 SaturatingSub(")
 cpp += "\n" + extract(source, "u32 DynamicSampledTextureCap(")
 cpp += r"""
+} // anonymous namespace
 int main() {
     HostTranslateInfo host;
     Info i;
@@ -101,7 +105,7 @@ with tempfile.TemporaryDirectory() as temp:
         print("SKIP: no GCC or Clang C++ driver on this platform")
     for exe in compilers:
         output = Path(temp) / Path(exe).name
-        flags = ["-std=c++20", "-O1", "-g"]
+        flags = ["-std=c++20", "-O1", "-g", "-Wall", "-Wextra", "-Werror=unused-function"]
         # Sanitizers available in the development environments used for the check.
         flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run([exe, *flags, str(path), "-o", str(output)], check=True)
