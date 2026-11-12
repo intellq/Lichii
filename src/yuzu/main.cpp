@@ -10,6 +10,7 @@
 #include "common/fs/path_util.h"
 #include "nx2_switches.h"
 #include "startup_checks.h"
+#include "yuzu/util/tooltip_wrap.h"
 
 #if YUZU_ROOM
 #include <cstring>
@@ -188,6 +189,8 @@ int main(int argc, char* argv[]) {
 #endif
 
     QApplication app(argc, argv);
+    ToolTipWrapFilter tooltip_wrap;
+    app.installEventFilter(&tooltip_wrap);
 
 #ifdef _WIN32
     OverrideWindowsFont();

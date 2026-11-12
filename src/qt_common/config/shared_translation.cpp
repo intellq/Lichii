@@ -37,33 +37,84 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     // A setting can be ignored by giving it a blank name
 
     // Applets
-    INSERT(Settings, cabinet_applet_mode, tr("Amiibo editor"), QString());
-    INSERT(Settings, controller_applet_mode, tr("Controller configuration"), QString());
-    INSERT(Settings, data_erase_applet_mode, tr("Data erase"), QString());
-    INSERT(Settings, error_applet_mode, tr("Error"), QString());
-    INSERT(Settings, net_connect_applet_mode, tr("Net connect"), QString());
-    INSERT(Settings, player_select_applet_mode, tr("Player select"), QString());
-    INSERT(Settings, swkbd_applet_mode, tr("Software keyboard"), QString());
-    INSERT(Settings, mii_edit_applet_mode, tr("Mii Edit"), QString());
-    INSERT(Settings, web_applet_mode, tr("Online web"), QString());
-    INSERT(Settings, shop_applet_mode, tr("Shop"), QString());
-    INSERT(Settings, photo_viewer_applet_mode, tr("Photo viewer"), QString());
-    INSERT(Settings, offline_web_applet_mode, tr("Offline web"), QString());
-    INSERT(Settings, login_share_applet_mode, tr("Login share"), QString());
-    INSERT(Settings, wifi_web_auth_applet_mode, tr("Wifi web auth"), QString());
-    INSERT(Settings, my_page_applet_mode, tr("My page"), QString());
+    INSERT(Settings, cabinet_applet_mode, tr("Amiibo editor"),
+           tr("How the game opens the amiibo editor. Custom frontend: Lichii's own window. Real "
+              "applet: the system applet from the installed firmware. Disabled: the game gets no "
+              "applet, which some games treat as cancelled."));
+    INSERT(Settings, controller_applet_mode, tr("Controller configuration"),
+           tr("How the game opens the controller setup. Custom frontend: Lichii's own window. Real "
+              "applet: the system applet from the installed firmware. Disabled: the game gets no "
+              "applet, which some games treat as cancelled."));
+    INSERT(Settings, data_erase_applet_mode, tr("Data erase"),
+           tr("How the game opens the data erase screen. Custom frontend: Lichii's own window. Real "
+              "applet: the system applet from the installed firmware. Disabled: the game gets no "
+              "applet, which some games treat as cancelled."));
+    INSERT(Settings, error_applet_mode, tr("Error"),
+           tr("How the game opens the error screen. Custom frontend: Lichii's own window. Real "
+              "applet: the system applet from the installed firmware. Disabled: the game gets no "
+              "applet, which some games treat as cancelled."));
+    INSERT(Settings, net_connect_applet_mode, tr("Net connect"),
+           tr("How the game opens the network connection screen. Custom frontend: Lichii's own "
+              "window. Real applet: the system applet from the installed firmware. Disabled: the "
+              "game gets no applet, which some games treat as cancelled."));
+    INSERT(Settings, player_select_applet_mode, tr("Player select"),
+           tr("How the game opens the player selection. Custom frontend: Lichii's own window. Real "
+              "applet: the system applet from the installed firmware. Disabled: the game gets no "
+              "applet, which some games treat as cancelled."));
+    INSERT(Settings, swkbd_applet_mode, tr("Software keyboard"),
+           tr("How the game opens the software keyboard. Custom frontend: Lichii's own window. Real "
+              "applet: the system applet from the installed firmware. Disabled: the game gets no "
+              "applet, which some games treat as cancelled."));
+    INSERT(Settings, mii_edit_applet_mode, tr("Mii Edit"),
+           tr("How the game opens the Mii editor. Custom frontend: Lichii's own window. Real applet: "
+              "the system applet from the installed firmware. Disabled: the game gets no applet, "
+              "which some games treat as cancelled."));
+    INSERT(Settings, web_applet_mode, tr("Online web"),
+           tr("How the game opens the online web browser. Custom frontend: Lichii's own window. Real "
+              "applet: the system applet from the installed firmware. Disabled: the game gets no "
+              "applet, which some games treat as cancelled."));
+    INSERT(Settings, shop_applet_mode, tr("Shop"),
+           tr("How the game opens the shop. Custom frontend: Lichii's own window. Real applet: the "
+              "system applet from the installed firmware. Disabled: the game gets no applet, which "
+              "some games treat as cancelled."));
+    INSERT(Settings, photo_viewer_applet_mode, tr("Photo viewer"),
+           tr("How the game opens the photo viewer. Custom frontend: Lichii's own window. Real "
+              "applet: the system applet from the installed firmware. Disabled: the game gets no "
+              "applet, which some games treat as cancelled."));
+    INSERT(Settings, offline_web_applet_mode, tr("Offline web"),
+           tr("How the game opens the offline web pages (manuals, help). Custom frontend: Lichii's "
+              "own window. Real applet: the system applet from the installed firmware. Disabled: the "
+              "game gets no applet, which some games treat as cancelled."));
+    INSERT(Settings, login_share_applet_mode, tr("Login share"),
+           tr("How the game opens the account login share. Custom frontend: Lichii's own window. "
+              "Real applet: the system applet from the installed firmware. Disabled: the game gets "
+              "no applet, which some games treat as cancelled."));
+    INSERT(Settings, wifi_web_auth_applet_mode, tr("Wifi web auth"),
+           tr("How the game opens the Wi-Fi web login. Custom frontend: Lichii's own window. Real "
+              "applet: the system applet from the installed firmware. Disabled: the game gets no "
+              "applet, which some games treat as cancelled."));
+    INSERT(Settings, my_page_applet_mode, tr("My page"),
+           tr("How the game opens the user page. Custom frontend: Lichii's own window. Real applet: "
+              "the system applet from the installed firmware. Disabled: the game gets no applet, "
+              "which some games treat as cancelled."));
     INSERT(Settings, enable_overlay, tr("Enable Overlay Applet"),
            tr("Enables Horizon\'s built-in overlay applet. Press and hold the home button for 1 "
               "second to show it."));
 
     // Audio
-    INSERT(Settings, sink_id, tr("Output Engine:"), QString());
-    INSERT(Settings, audio_output_device_id, tr("Output Device:"), QString());
-    INSERT(Settings, audio_input_device_id, tr("Input Device:"), QString());
-    INSERT(Settings, audio_muted, tr("Mute audio"), QString());
-    INSERT(Settings, volume, tr("Volume:"), QString());
+    INSERT(Settings, sink_id, tr("Output Engine:"),
+           tr("The audio backend that plays the sound. Auto picks the best one this system has."));
+    INSERT(Settings, audio_output_device_id, tr("Output Device:"),
+           tr("The device the sound plays on. Auto follows the system's default output."));
+    INSERT(Settings, audio_input_device_id, tr("Input Device:"),
+           tr("The microphone the game hears. Auto uses the system's default input."));
+    INSERT(Settings, audio_muted, tr("Mute audio"),
+           tr("Silences the game's sound."));
+    INSERT(Settings, volume, tr("Volume:"),
+           tr("Volume of the game's sound, on top of the system volume."));
     INSERT(Settings, dump_audio_commands, QString(), QString());
-    INSERT(UISettings, mute_when_in_background, tr("Mute audio when in background"), QString());
+    INSERT(UISettings, mute_when_in_background, tr("Mute audio when in background"),
+           tr("Silences the game while the Lichii window is not in focus."));
 
     // Core
     INSERT(Settings, use_multi_core, tr("Multicore CPU Emulation"),
@@ -96,7 +147,9 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     // Cpu
     INSERT(Settings, cpu_accuracy, tr("Accuracy:"),
            tr("Change the accuracy of the emulated CPU (for debugging only)."));
-    INSERT(Settings, cpu_backend, tr("Backend:"), QString());
+    INSERT(Settings, cpu_backend, tr("Backend:"),
+           tr("How the game's ARM code runs. Dynarmic recompiles it into code for this CPU (the "
+              "usual choice). NCE runs it directly, on ARM64 hosts only."));
 
     INSERT(Settings, cpu_clock, tr("CPU Clocks"),
            tr("Raises the clock the emulated CPU reports, which removes some FPS limiters.\n"
@@ -106,7 +159,9 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, cpu_ticks, tr("Custom CPU Ticks"),
            tr("Set a custom value of CPU ticks. Higher values can increase performance, but may "
               "cause deadlocks. A range of 77-21000 is recommended."));
-    INSERT(Settings, cpu_backend, tr("Backend:"), QString());
+    INSERT(Settings, cpu_backend, tr("Backend:"),
+           tr("How the game's ARM code runs. Dynarmic recompiles it into code for this CPU (the "
+              "usual choice). NCE runs it directly, on ARM64 hosts only."));
 
     // Cpu Debug
 
@@ -312,13 +367,27 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
 
     INSERT(Settings, frame_gen, tr("Enable Frame Generation"),
            tr("Paused while HDR output is active."));
-    INSERT(Settings, frame_gen_type, tr("Frame Generation Type"), QString());
-    INSERT(Settings, frame_gen_multiplier, tr("Frame Generation Multiplier"), QString());
-    INSERT(Settings, frame_gen_target_rate, tr("Target Frame Rate"), QString());
-    INSERT(Settings, frame_gen_flow_scale_auto, tr("Auto Flow Scale"), QString());
-    INSERT(Settings, frame_gen_flow_scale, tr("Flow Scale"), QString());
-    INSERT(Settings, frame_gen_queue_target, tr("Queue Target"), QString());
-    INSERT(Settings, frame_gen_dump_flow, tr("Dump Optical Flow"), QString());
+    INSERT(Settings, frame_gen_type, tr("Frame Generation Type"),
+           tr("Which frame generation makes the in-between frames: Lossless Scaling's (needs its "
+              "files) or the built-in optical flow interpolation."));
+    INSERT(Settings, frame_gen_multiplier, tr("Frame Generation Multiplier"),
+           tr("How many frames are shown for each frame the game draws: 2 doubles the frame rate, 4 "
+              "quadruples it. More generated frames add latency and artifacts."));
+    INSERT(Settings, frame_gen_target_rate, tr("Target Frame Rate"),
+           tr("Frame rate to reach with generated frames: only as many are made as needed for it, at "
+              "most the multiplier. 0 always uses the full multiplier."));
+    INSERT(Settings, frame_gen_flow_scale_auto, tr("Auto Flow Scale"),
+           tr("Picks the resolution of the optical flow from how much the game's image is scaled up "
+              "to the screen."));
+    INSERT(Settings, frame_gen_flow_scale, tr("Flow Scale"),
+           tr("Resolution of the optical flow, as a percentage of the screen. Lower is faster but "
+              "makes motion less accurate. Used when Auto Flow Scale is off."));
+    INSERT(Settings, frame_gen_queue_target, tr("Queue Target"),
+           tr("Extra frames kept in the queue before showing them. Higher values even out the pacing "
+              "but add latency. 0 has the lowest latency."));
+    INSERT(Settings, frame_gen_dump_flow, tr("Dump Optical Flow"),
+           tr("Saves the optical flow of generated frames to disk, for debugging. Slows the game "
+              "down and fills the disk: leave it off."));
 
     // Renderer (Advanced Graphics)
     INSERT(Settings, use_asynchronous_gpu_emulation, QString(), QString());
@@ -340,9 +409,15 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Controls the GPU emulation mode.\nMost games render fine with Fast, but Accurate is still "
               "required for some.\nParticles tend to only render correctly with Accurate mode."));
     INSERT(Settings, dma_accuracy, tr("DMA Accuracy:"),
-           tr("Controls the DMA read mode.\nUnsafe is faster, while Safe is more stable and can fix issues in some games.\nDefault follows the GPU Accuracy setting."));
+           tr("Controls the DMA read mode.\n"
+              "Unsafe is faster, while Safe is more stable and can fix issues in some games.\n"
+              "Default follows the GPU Accuracy setting."));
     INSERT(Settings, gpu_fence_behavior, tr("GPU Fence Behavior:"),
-           tr("Controls the GPU fence synchronization behavior.\nImmediate is the fastest option, but can introduce some issues.\nBalanced offers better compatibility and may fix issues in some games.\nAccurate further improves compatibility at the cost of some performance.\nDefault follows the GPU Mode setting."));
+           tr("Controls the GPU fence synchronization behavior.\n"
+              "Immediate is the fastest option, but can introduce some issues.\n"
+              "Balanced offers better compatibility and may fix issues in some games.\n"
+              "Accurate further improves compatibility at the cost of some performance.\n"
+              "Default follows the GPU Mode setting."));
     INSERT(Settings, native_compute_write_mark, tr("Native compute write mark:"),
            tr("How much of a Switch 2 compute shader's storage buffer is treated as written by "
               "the GPU after each dispatch.\nAuto marks what the shader's stores can reach and "
@@ -376,6 +451,15 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "Can hurt performance on CPUs with few cores. Skipped on CPUs with fewer than 6 "
               "physical performance cores.\n"
               "Windows and Linux only. Takes effect when a game starts."));
+    INSERT(Settings, gpu_wait_in_hardware, tr("GPU thread waits in hardware"),
+           tr("How the GPU thread waits for a semaphore the game's CPU releases.\n"
+              "On: it waits in hardware (MONITORX/UMWAIT), checks the semaphore words every 2 us and "
+              "is woken at once by new commands, GPU releases and GPU fences; after 500 us it sleeps "
+              "500 us at a time. Uses less CPU (Mario Kart World: about 10 ms of CPU per frame "
+              "less).\n"
+              "Off: the earlier wait, a yield loop for 500 us, then 50 us sleeps, which reacts "
+              "faster. Ocarina of Time runs 1-2 fps faster with it off.\n"
+              "Takes effect when a game starts."));
 
     INSERT(Settings, use_vulkan_driver_pipeline_cache, tr("Use Vulkan pipeline cache"),
            tr("Enables GPU vendor-specific pipeline cache.\nThis option can improve shader loading "
@@ -482,7 +566,8 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("This option can be overridden when region setting is auto-select"));
     INSERT(Settings, region_index, tr("Region:"), tr("The region of the console."));
     INSERT(Settings, time_zone_index, tr("Time Zone:"), tr("The time zone of the console."));
-    INSERT(Settings, sound_index, tr("Sound Output Mode:"), QString());
+    INSERT(Settings, sound_index, tr("Sound Output Mode:"),
+           tr("The audio output the emulated console reports to the game: mono, stereo or surround."));
     INSERT(Settings, use_docked_mode, tr("Console Mode:"),
            tr("Selects if the console is in Docked or Handheld mode.\nGames will change "
               "their resolution, details and supported controllers and depending on this setting.\n"
@@ -517,9 +602,13 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Whether or not to check for updates upon startup."));
 
     // Linux
-    INSERT(UISettings, enable_gamemode, tr("Enable Gamemode"), QString());
+    INSERT(UISettings, enable_gamemode, tr("Enable Gamemode"),
+           tr("Asks Feral GameMode, when installed, to tune the CPU governor and process priority "
+              "for games while one runs. Linux only."));
 #ifdef __unix__
-    INSERT(UISettings, gui_force_x11, tr("Force X11 as Graphics Backend"), QString());
+    INSERT(UISettings, gui_force_x11, tr("Force X11 as Graphics Backend"),
+           tr("Runs the window through XWayland (X11) instead of native Wayland. Takes effect after "
+              "restarting Lichii."));
     INSERT(UISettings, gui_hide_backend_warning, QString(), QString());
 #endif
 

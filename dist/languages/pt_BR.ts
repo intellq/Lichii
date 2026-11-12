@@ -221,6 +221,176 @@ Isto banirá tanto o nome de usuário como o endereço IP do fórum.</translatio
 <context>
     <name>ConfigurationShared</name>
     <message>
+        <source>How the game opens the amiibo editor. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o editor de amiibo. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the controller setup. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o configurador de controles. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the data erase screen. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o apagador de dados. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the error screen. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o aviso de erro. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the network connection screen. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o assistente de conexão. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the player selection. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o seletor de jogador. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the software keyboard. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o teclado virtual. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the Mii editor. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o editor de Mii. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the online web browser. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o navegador web online. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the shop. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o applet da loja. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the photo viewer. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o visualizador de fotos. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the offline web pages (manuals, help). Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o navegador offline (manuais, ajuda). Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the account login share. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o compartilhamento de login. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the Wi-Fi web login. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o login web de Wi-Fi. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>How the game opens the user page. Custom frontend: Lichii&apos;s own window. Real applet: the system applet from the installed firmware. Disabled: the game gets no applet, which some games treat as cancelled.</source>
+        <translation>Como o jogo abre o applet da página do usuário. Frontend customizado: janela do próprio Lichii. Applet real: o applet do sistema, do firmware instalado. Desativado: o jogo fica sem o applet, o que alguns jogos tratam como cancelado.</translation>
+    </message>
+    <message>
+        <source>The audio backend that plays the sound. Auto picks the best one this system has.</source>
+        <translation>O backend de áudio que toca o som. Automático escolhe o melhor disponível no sistema.</translation>
+    </message>
+    <message>
+        <source>The device the sound plays on. Auto follows the system&apos;s default output.</source>
+        <translation>O dispositivo onde o som toca. Automático segue a saída padrão do sistema.</translation>
+    </message>
+    <message>
+        <source>The microphone the game hears. Auto uses the system&apos;s default input.</source>
+        <translation>O microfone que o jogo escuta. Automático usa a entrada padrão do sistema.</translation>
+    </message>
+    <message>
+        <source>Silences the game&apos;s sound.</source>
+        <translation>Silencia o som do jogo.</translation>
+    </message>
+    <message>
+        <source>Volume of the game&apos;s sound, on top of the system volume.</source>
+        <translation>Volume do som do jogo, aplicado sobre o volume do sistema.</translation>
+    </message>
+    <message>
+        <source>Silences the game while the Lichii window is not in focus.</source>
+        <translation>Silencia o jogo enquanto a janela do Lichii não está em foco.</translation>
+    </message>
+    <message>
+        <source>How the game&apos;s ARM code runs. Dynarmic recompiles it into code for this CPU (the usual choice). NCE runs it directly, on ARM64 hosts only.</source>
+        <translation>Como o código ARM do jogo é executado. Dynarmic o recompila para esta CPU (a escolha comum). NCE o executa diretamente, só em hosts ARM64.</translation>
+    </message>
+    <message>
+        <source>Which frame generation makes the in-between frames: Lossless Scaling&apos;s (needs its files) or the built-in optical flow interpolation.</source>
+        <translation>Qual geração de quadros cria os quadros intermediários: a do Lossless Scaling (precisa dos arquivos dele) ou a interpolação por fluxo óptico embutida.</translation>
+    </message>
+    <message>
+        <source>How many frames are shown for each frame the game draws: 2 doubles the frame rate, 4 quadruples it. More generated frames add latency and artifacts.</source>
+        <translation>Quantos quadros são exibidos para cada quadro que o jogo desenha: 2 dobra a taxa, 4 quadruplica. Mais quadros gerados aumentam a latência e os artefatos.</translation>
+    </message>
+    <message>
+        <source>Frame rate to reach with generated frames: only as many are made as needed for it, at most the multiplier. 0 always uses the full multiplier.</source>
+        <translation>Taxa de quadros a alcançar com os quadros gerados: só os necessários para ela são criados, no máximo o multiplicador. 0 usa sempre o multiplicador inteiro.</translation>
+    </message>
+    <message>
+        <source>Picks the resolution of the optical flow from how much the game&apos;s image is scaled up to the screen.</source>
+        <translation>Escolhe a resolução do fluxo óptico pela ampliação da imagem do jogo até a tela.</translation>
+    </message>
+    <message>
+        <source>Resolution of the optical flow, as a percentage of the screen. Lower is faster but makes motion less accurate. Used when Auto Flow Scale is off.</source>
+        <translation>Resolução do fluxo óptico, em porcentagem da tela. Menor é mais rápido, mas o movimento fica menos preciso. Usada com a escala automática desligada.</translation>
+    </message>
+    <message>
+        <source>Extra frames kept in the queue before showing them. Higher values even out the pacing but add latency. 0 has the lowest latency.</source>
+        <translation>Quadros extras guardados na fila antes de exibi-los. Valores maiores regularizam o ritmo, mas aumentam a latência. 0 tem a menor latência.</translation>
+    </message>
+    <message>
+        <source>Saves the optical flow of generated frames to disk, for debugging. Slows the game down and fills the disk: leave it off.</source>
+        <translation>Grava em disco o fluxo óptico dos quadros gerados, para depuração. Deixa o jogo lento e enche o disco: mantenha desligado.</translation>
+    </message>
+    <message>
+        <source>The audio output the emulated console reports to the game: mono, stereo or surround.</source>
+        <translation>A saída de áudio que o console emulado informa ao jogo: mono, estéreo ou surround.</translation>
+    </message>
+    <message>
+        <source>Asks Feral GameMode, when installed, to tune the CPU governor and process priority for games while one runs. Linux only.</source>
+        <translation>Pede ao Feral GameMode, se instalado, que ajuste o governador da CPU e a prioridade do processo enquanto um jogo roda. Só no Linux.</translation>
+    </message>
+    <message>
+        <source>Runs the window through XWayland (X11) instead of native Wayland. Takes effect after restarting Lichii.</source>
+        <translation>Roda a janela pelo XWayland (X11) em vez do Wayland nativo. Vale depois de reiniciar o Lichii.</translation>
+    </message>
+    <message>
+        <source>GPU thread waits in hardware</source>
+        <translation>Espera da GPU em hardware</translation>
+    </message>
+    <message>
+        <source>How the GPU thread waits for a semaphore the game&apos;s CPU releases.
+On: it waits in hardware (MONITORX/UMWAIT), checks the semaphore words every 2 us and is woken at once by new commands, GPU releases and GPU fences; after 500 us it sleeps 500 us at a time. Uses less CPU (Mario Kart World: about 10 ms of CPU per frame less).
+Off: the earlier wait, a yield loop for 500 us, then 50 us sleeps, which reacts faster. Ocarina of Time runs 1-2 fps faster with it off.
+Takes effect when a game starts.</source>
+        <translation>Como a thread da GPU espera um semáforo que a CPU do jogo libera.
+Ligado: espera em hardware (MONITORX/UMWAIT), confere as palavras do semáforo a cada 2 us e é acordada na hora por comandos novos, liberações da GPU e fences da GPU; depois de 500 us dorme 500 us de cada vez. Gasta menos CPU (Mario Kart World: cerca de 10 ms de CPU a menos por quadro).
+Desligado: a espera anterior, um loop de yield por 500 us e depois sonos de 50 us, que reage mais rápido. O Ocarina of Time roda 1-2 fps mais rápido com ela desligada.
+Vale ao iniciar um jogo.</translation>
+    </message>
+    <message>
+        <source>Frame Generation Type</source>
+        <translation>Tipo de geração de quadros</translation>
+    </message>
+    <message>
+        <source>Frame Generation Multiplier</source>
+        <translation>Multiplicador da geração de quadros</translation>
+    </message>
+    <message>
+        <source>Target Frame Rate</source>
+        <translation>Taxa de quadros alvo</translation>
+    </message>
+    <message>
+        <source>Auto Flow Scale</source>
+        <translation>Escala automática do fluxo</translation>
+    </message>
+    <message>
+        <source>Flow Scale</source>
+        <translation>Escala do fluxo</translation>
+    </message>
+    <message>
+        <source>Queue Target</source>
+        <translation>Fila alvo</translation>
+    </message>
+    <message>
+        <source>Dump Optical Flow</source>
+        <translation>Gravar fluxo óptico</translation>
+    </message>
+    <message>
         <source>Ocarina of Time FSR output:</source>
         <translation>Saída do FSR no Ocarina of Time:</translation>
     </message>
