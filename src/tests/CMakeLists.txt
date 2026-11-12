@@ -14,6 +14,7 @@ add_executable(tests
     video_core/aftermath_dump.cpp
     video_core/frame_dump_schedule.cpp
     video_core/nx2_stutter_trace.cpp
+    video_core/back_idle_trace.cpp
     video_core/host_mip_limits.cpp
     video_core/texture_gc_age.cpp
     video_core/gpu_timestamp.cpp
@@ -83,6 +84,7 @@ add_executable(tests
     video_core/framebuffer_clear_layers.cpp
     video_core/framebuffer_limits.cpp
     video_core/unbacked_fallback.cpp
+    video_core/eviction_age.cpp
     video_core/host_memory_limit.cpp
     video_core/fire_emblem_upscale.cpp
     video_core/query_copy.cpp
@@ -171,6 +173,7 @@ add_executable(tests
     common/memory_detect.cpp
     core/host_memory_failure.cpp
     common/multi_level_page_table.cpp
+    common/nextendo.cpp
     common/page_table.cpp
     common/param_package.cpp
     common/poll_window.cpp
@@ -183,6 +186,7 @@ add_executable(tests
     common/unique_function.cpp
     common/zstd_compression.cpp
     core/core_timing.cpp
+    core/nextendo_redirect.cpp
     core/thread_startup_policy.cpp
     core/nup_writer.cpp
     core/nup_metadata.cpp

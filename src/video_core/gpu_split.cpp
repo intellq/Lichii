@@ -28,6 +28,7 @@
 #include "video_core/gpu_split.h"
 #include "video_core/memory_manager.h"
 #include "video_core/nx2.h"
+#include "video_core/nx2_back_idle_trace.h"
 #include "video_core/nx2_fast_draw.h"
 #include "video_core/nx2_profile.h"
 
@@ -55,6 +56,13 @@ bool BackTickEnabled() {
 }
 
 std::atomic<bool> g_back_tick_enabled{BackTickEnabled()};
+
+BackIdleTrace::FrontState WaitState(DrainSite site) {
+    return site == DrainSite::ListWriters || site == DrainSite::ListSync ||
+                   site == DrainSite::ListFlush
+               ? BackIdleTrace::FrontState::Writers
+               : BackIdleTrace::FrontState::Drain;
+}
 
 } // Anonymous namespace
 
@@ -256,6 +264,7 @@ void GpuSplit::Drain(DrainSite site) {
     }
     Publish();
     Nx2Profile::Scope scope{Nx2Profile::Zone::SplitDrain};
+    const BackIdleTrace::FrontWait idle_trace{WaitState(site)};
     const u64 start = Nx2Profile::Enabled() ? Nx2Profile::Ticks() : 0;
     // Everything consumed is not enough: the back submits deferred work (Scheduler::DeferFlush)
     // from its idle hook afterwards, and the caller may use the scheduler once this returns.
@@ -386,6 +395,7 @@ bool GpuSplit::WaitFor(u64 target, DrainSite site) {
         return false;
     }
     Nx2Profile::Scope scope{Nx2Profile::Zone::WriterWait};
+    const BackIdleTrace::FrontWait idle_trace{WaitState(site)};
     wait_target.store(target, std::memory_order_seq_cst);
     Publish();
     const u64 start = Nx2Profile::Enabled() ? Nx2Profile::Ticks() : 0;
@@ -590,12 +600,17 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
     g_back_thread_id.store(GetCurrentThreadId(), std::memory_order_relaxed);
 #endif
     u64 read_position = 0;
+    const bool idle_trace = BackIdleTrace::Enabled();
+    u64 idle_since = 0;
     while (!stop_token.stop_requested()) {
         Nx2Profile::Report("GPU back thread", true);
         MaybeTick();
         u64 available = published.load(std::memory_order_acquire);
         if (available == read_position) {
             Nx2Profile::Scope scope{Nx2Profile::Zone::SplitWait};
+            if (idle_trace && idle_since == 0) {
+                idle_since = BackIdleTrace::Now();
+            }
             // The front publishes what it holds after a few more words from now on.
             back_idle_at.store(read_position, std::memory_order_relaxed);
             const auto spin_start = g_acquire_counting ? std::chrono::steady_clock::now()
@@ -643,6 +658,10 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
                 back_waiting.store(false, std::memory_order_relaxed);
                 continue;
             }
+        }
+        if (idle_since != 0) {
+            BackIdleTrace::NoteBackIdle(idle_since, BackIdleTrace::Now());
+            idle_since = 0;
         }
         u64 last_store = read_position;
         // Before any entry runs, so a front that sees these entries consumed also sees this.
@@ -707,6 +726,12 @@ void GpuSplit::ReportAcquire() {
     const u64 polls = take(stats.polls);
     const u64 acquire_polls = take(stats.acquire_polls);
     const u64 list_polls = take(stats.list_polls);
+    const u64 front_polls = take(stats.front_polls);
+    const u64 front_sleeps = take(stats.front_sleeps);
+    const u64 front_woken = take(stats.front_woken);
+    const u64 front_stored = take(stats.front_stored);
+    const u64 front_found_polling = take(stats.front_found_polling);
+    const u64 front_found_late = take(stats.front_found_late);
     const u64 early_publishes = take(stats.early_publishes);
     const u64 settles = take(stats.settles);
     const u64 back_waits = take(stats.back_waits);
@@ -722,6 +747,12 @@ void GpuSplit::ReportAcquire() {
              passed, by_queued, latched, drained, valve_drains, drain_operation, drain_settings,
              drain_word, drain_queued, polls, acquire_polls, list_polls, back_waits, back_sleeps,
              spin_ms, early_publishes, settles);
+    LOG_INFO(HW_GPU,
+             "GPU thread waits for suspended channels in 10 s: {} in hardware, {} in the OS, {} "
+             "ended by a wake, {} by a store to a semaphore word; channels that moved without "
+             "either: {} found while polling, {} found late in the OS wait",
+             front_polls, front_sleeps, front_woken, front_stored, front_found_polling,
+             front_found_late);
     const u64 mismatches = take(stats.mismatches);
     const u64 unlanded = take(stats.unlanded);
     const u64 late = take(stats.late);
