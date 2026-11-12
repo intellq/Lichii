@@ -40,10 +40,18 @@
          </widget>
         </item>
         <item row="0" column="2">
-         <widget class="QLineEdit" name="nand_directory_edit"/>
+         <widget class="QLineEdit" name="nand_directory_edit">
+          <property name="toolTip">
+           <string>Directory used to store the emulated NAND.</string>
+          </property>
+         </widget>
         </item>
         <item row="1" column="2">
-         <widget class="QLineEdit" name="sdmc_directory_edit"/>
+         <widget class="QLineEdit" name="sdmc_directory_edit">
+          <property name="toolTip">
+           <string>Directory used to store the emulated SD card.</string>
+          </property>
+         </widget>
         </item>
         <item row="1" column="0">
          <widget class="QLabel" name="label_2">
@@ -67,7 +75,11 @@
          </widget>
         </item>
         <item row="2" column="2">
-         <widget class="QLineEdit" name="save_directory_edit"/>
+         <widget class="QLineEdit" name="save_directory_edit">
+          <property name="toolTip">
+           <string>Directory used to store save data.</string>
+          </property>
+         </widget>
         </item>
         <item row="2" column="3">
          <widget class="QToolButton" name="save_directory_button">
@@ -109,10 +121,17 @@
          </widget>
         </item>
         <item row="2" column="2">
-         <widget class="QLineEdit" name="gamecard_path_edit"/>
+         <widget class="QLineEdit" name="gamecard_path_edit">
+          <property name="toolTip">
+           <string>Path of the game card image to use for the emulated game card slot.</string>
+          </property>
+         </widget>
         </item>
         <item row="0" column="1">
          <widget class="QCheckBox" name="gamecard_inserted">
+          <property name="toolTip">
+           <string>Makes the emulated game card appear as inserted.</string>
+          </property>
           <property name="text">
            <string>Inserted</string>
           </property>
@@ -120,6 +139,9 @@
         </item>
         <item row="1" column="1">
          <widget class="QCheckBox" name="gamecard_current_game">
+          <property name="toolTip">
+           <string>Uses the currently running game as the emulated game card.</string>
+          </property>
           <property name="text">
            <string>Current Game</string>
           </property>
@@ -142,10 +164,18 @@
        </property>
        <layout class="QGridLayout" name="gridLayout_4">
         <item row="1" column="2">
-         <widget class="QLineEdit" name="load_path_edit"/>
+         <widget class="QLineEdit" name="load_path_edit">
+          <property name="toolTip">
+           <string>Directory where the emulator looks for modifications (mods) to load.</string>
+          </property>
+         </widget>
         </item>
         <item row="0" column="2">
-         <widget class="QLineEdit" name="dump_path_edit"/>
+         <widget class="QLineEdit" name="dump_path_edit">
+          <property name="toolTip">
+           <string>Directory where dumped game data is written.</string>
+          </property>
+         </widget>
         </item>
         <item row="0" column="3">
          <widget class="QToolButton" name="dump_path_button">
@@ -165,6 +195,9 @@
          <layout class="QHBoxLayout" name="horizontalLayout">
           <item>
            <widget class="QCheckBox" name="dump_nso">
+            <property name="toolTip">
+             <string>Writes decompressed NSOs to the dump directory when a game is loaded.</string>
+            </property>
             <property name="text">
              <string>Dump Decompressed NSOs</string>
             </property>
@@ -172,6 +205,9 @@
           </item>
           <item>
            <widget class="QCheckBox" name="dump_exefs">
+            <property name="toolTip">
+             <string>Writes the ExeFS of the game to the dump directory when it is loaded.</string>
+            </property>
             <property name="text">
              <string>Dump ExeFS</string>
             </property>
@@ -222,6 +258,9 @@
          <layout class="QHBoxLayout" name="horizontalLayout_2">
           <item>
            <widget class="QCheckBox" name="cache_game_list">
+            <property name="toolTip">
+             <string>Caches game metadata so the game list loads faster. Turn it off if the list shows outdated information.</string>
+            </property>
             <property name="text">
              <string>Cache Game List Metadata</string>
             </property>

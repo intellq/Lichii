@@ -26,7 +26,11 @@
        </property>
        <layout class="QGridLayout" name="gridLayout_2">
         <item row="1" column="1">
-         <widget class="QComboBox" name="network_interface"/>
+         <widget class="QComboBox" name="network_interface">
+          <property name="toolTip">
+           <string>Network interface the emulated console uses to connect to the network.</string>
+          </property>
+         </widget>
         </item>
         <item row="1" column="0">
          <widget class="QLabel" name="label_4">
@@ -37,6 +41,9 @@
         </item>
         <item row="2" column="0" colspan="2">
          <widget class="QCheckBox" name="airplane_mode">
+          <property name="toolTip">
+           <string>Emulates the console with airplane mode on, so games see no network connection. It is turned off when online play through Nextendo Network is enabled.</string>
+          </property>
           <property name="text">
            <string>Enable Airplane Mode</string>
           </property>
@@ -63,6 +70,9 @@
        <layout class="QGridLayout" name="nextendo_layout">
         <item row="0" column="0" colspan="2">
          <widget class="QCheckBox" name="nextendo_enabled">
+          <property name="toolTip">
+           <string>Lets games play online through nextendo.network. Requires signing in with a nextendo.network account.</string>
+          </property>
           <property name="text">
            <string>Play online through Nextendo Network</string>
           </property>
@@ -86,7 +96,11 @@
          </widget>
         </item>
         <item row="2" column="1">
-         <widget class="QLineEdit" name="nextendo_client_id"/>
+         <widget class="QLineEdit" name="nextendo_client_id">
+          <property name="toolTip">
+           <string>Client ID used for nextendo.network. If left empty, the default is used.</string>
+          </property>
+         </widget>
         </item>
         <item row="3" column="0" colspan="2">
          <widget class="QLabel" name="nextendo_status">

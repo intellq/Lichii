@@ -75,6 +75,9 @@
             </property>
             <item>
              <widget class="QCheckBox" name="toggle_gdbstub">
+              <property name="toolTip">
+               <string>Starts a GDB stub server so a debugger can attach to the emulated program.</string>
+              </property>
               <property name="sizePolicy">
                <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
                 <horstretch>0</horstretch>
@@ -122,6 +125,9 @@
                </item>
                <item>
                 <widget class="QSpinBox" name="gdbport_spinbox">
+                 <property name="toolTip">
+                  <string>TCP port the GDB stub listens on.</string>
+                 </property>
                  <property name="sizePolicy">
                   <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
                    <horstretch>0</horstretch>
@@ -192,7 +198,11 @@
              </widget>
             </item>
             <item>
-             <widget class="QLineEdit" name="log_filter_edit"/>
+             <widget class="QLineEdit" name="log_filter_edit">
+              <property name="toolTip">
+               <string>Filter that limits which log classes and levels are written, for example "*:Info Service:Debug".</string>
+              </property>
+             </widget>
             </item>
            </layout>
           </widget>
@@ -262,6 +272,9 @@
          </item>
          <item row="1" column="1">
           <widget class="QCheckBox" name="toggle_console">
+           <property name="toolTip">
+            <string>Also prints the log to the console window.</string>
+           </property>
            <property name="text">
             <string>Show Log in Console</string>
            </property>
@@ -320,7 +333,11 @@
           </widget>
          </item>
          <item>
-          <widget class="QLineEdit" name="homebrew_args_edit"/>
+          <widget class="QLineEdit" name="homebrew_args_edit">
+           <property name="toolTip">
+            <string>Arguments passed to the program when it starts, for homebrew that reads command line arguments. Can only be changed while no game is running.</string>
+           </property>
+          </widget>
          </item>
         </layout>
        </item>
@@ -383,6 +400,9 @@
          </item>
          <item row="1" column="0">
           <widget class="QCheckBox" name="enable_renderdoc_hotkey">
+           <property name="toolTip">
+            <string>Enables a hotkey to capture a frame with RenderDoc. Only useful for graphics debugging.</string>
+           </property>
            <property name="text">
             <string>Enable Renderdoc Hotkey</string>
            </property>
@@ -494,6 +514,9 @@
          </item>
          <item row="4" column="0">
           <widget class="QCheckBox" name="disable_web_applet">
+           <property name="toolTip">
+            <string>Disables the web applet. Games that try to open a web page will not show it.</string>
+           </property>
            <property name="text">
             <string>Disable Web Applet</string>
            </property>
@@ -501,6 +524,9 @@
          </item>
          <item row="5" column="0">
           <widget class="QCheckBox" name="enable_all_controllers">
+           <property name="toolTip">
+            <string>Makes every controller type available for selection, including types that real consoles do not normally offer.</string>
+           </property>
            <property name="text">
             <string>Enable All Controller Types</string>
            </property>
@@ -508,6 +534,9 @@
          </item>
          <item row="6" column="0">
           <widget class="QCheckBox" name="use_auto_stub">
+           <property name="toolTip">
+            <string>Automatically stubs unimplemented services instead of stopping emulation. Can hide problems or cause unexpected behavior.</string>
+           </property>
            <property name="text">
             <string>Enable Auto-Stub</string>
            </property>
@@ -515,6 +544,9 @@
          </item>
          <item row="0" column="0">
           <widget class="QCheckBox" name="quest_flag">
+           <property name="toolTip">
+            <string>Runs the system in kiosk (Quest) mode.</string>
+           </property>
            <property name="text">
             <string>Kiosk (Quest) Mode</string>
            </property>
@@ -522,6 +554,9 @@
          </item>
          <item row="1" column="0">
           <widget class="QCheckBox" name="use_dev_keys">
+           <property name="toolTip">
+            <string>Loads dev.keys instead of prod.keys for decryption.</string>
+           </property>
            <property name="text">
             <string>Use dev.keys</string>
            </property>
@@ -529,6 +564,9 @@
          </item>
          <item row="2" column="0">
           <widget class="QCheckBox" name="use_debug_asserts">
+           <property name="toolTip">
+            <string>Enables debug assertions, which stop emulation when an internal check fails.</string>
+           </property>
            <property name="text">
             <string>Enable Debug Asserts</string>
            </property>
@@ -726,6 +764,9 @@
          </item>
          <item row="2" column="0">
           <widget class="QCheckBox" name="flush_line">
+           <property name="toolTip">
+            <string>Flushes the log file after every line. Slower, but keeps the log complete if the emulator crashes.</string>
+           </property>
            <property name="text">
             <string>Flush log output on each line</string>
            </property>
@@ -733,6 +774,9 @@
          </item>
          <item row="3" column="0">
           <widget class="QCheckBox" name="fs_access_log">
+           <property name="toolTip">
+            <string>Logs file system accesses made by the emulated program.</string>
+           </property>
            <property name="text">
             <string>Enable FS Access Log</string>
            </property>
@@ -740,6 +784,9 @@
          </item>
          <item row="4" column="0">
           <widget class="QCheckBox" name="reporting_services">
+           <property name="toolTip">
+            <string>Enables verbose logging of the reporting services. This can produce very large logs.</string>
+           </property>
            <property name="text">
             <string>Enable Verbose Reporting Services**</string>
            </property>
@@ -747,6 +794,9 @@
          </item>
          <item row="5" column="0">
           <widget class="QCheckBox" name="censor_username">
+           <property name="toolTip">
+            <string>Hides the username in the log output.</string>
+           </property>
            <property name="text">
             <string>Censor username in logs</string>
            </property>

@@ -83,6 +83,9 @@
           </property>
           <item>
            <widget class="QComboBox" name="comboControllerType">
+            <property name="toolTip">
+             <string>Type of controller emulated for this player.</string>
+            </property>
             <property name="minimumSize">
              <size>
               <width>0</width>
@@ -117,6 +120,9 @@
           </property>
           <item>
            <widget class="QComboBox" name="comboDevices">
+            <property name="toolTip">
+             <string>Input device used for this player. Pick the device whose buttons you want to map.</string>
+            </property>
             <property name="minimumContentsLength">
              <number>60</number>
             </property>
@@ -154,6 +160,9 @@
           </property>
           <item>
            <widget class="QComboBox" name="comboProfiles">
+            <property name="toolTip">
+             <string>Saved input profile. Selecting one loads its mappings for this player.</string>
+            </property>
             <property name="minimumSize">
              <size>
               <width>0</width>
@@ -639,6 +648,9 @@
                    </property>
                    <item>
                     <widget class="QSpinBox" name="spinboxLStickRange">
+                     <property name="toolTip">
+                      <string>Range of the left stick. Lower values reduce how far the stick reports.</string>
+                     </property>
                      <property name="minimumSize">
                       <size>
                        <width>68</width>
@@ -706,6 +718,9 @@
                 </item>
                 <item>
                  <widget class="QSlider" name="sliderLStickDeadzone">
+                  <property name="toolTip">
+                   <string>Deadzone of the left stick. Movements smaller than this value are ignored.</string>
+                  </property>
                   <property name="maximum">
                    <number>100</number>
                   </property>
@@ -730,6 +745,9 @@
                 </item>
                 <item>
                  <widget class="QSlider" name="sliderLStickModifierRange">
+                  <property name="toolTip">
+                   <string>Range of the left stick while the modifier button is held.</string>
+                  </property>
                   <property name="maximum">
                    <number>100</number>
                   </property>
@@ -1260,6 +1278,9 @@
                    </item>
                    <item>
                     <widget class="QSlider" name="sliderZLThreshold">
+                     <property name="toolTip">
+                      <string>Pressure threshold at which the ZL trigger counts as pressed.</string>
+                     </property>
                      <property name="maximumSize">
                       <size>
                        <width>70</width>
@@ -1567,6 +1588,9 @@
                    </item>
                    <item>
                     <widget class="QSlider" name="sliderZRThreshold">
+                     <property name="toolTip">
+                      <string>Pressure threshold at which the ZR trigger counts as pressed.</string>
+                     </property>
                      <property name="maximumSize">
                       <size>
                        <width>70</width>
@@ -2716,6 +2740,9 @@
                    </property>
                    <item>
                     <widget class="QSpinBox" name="spinboxRStickRange">
+                     <property name="toolTip">
+                      <string>Range of the right stick. Lower values reduce how far the stick reports.</string>
+                     </property>
                      <property name="minimumSize">
                       <size>
                        <width>68</width>
@@ -2780,6 +2807,9 @@
                 </item>
                 <item>
                  <widget class="QSlider" name="sliderRStickDeadzone">
+                  <property name="toolTip">
+                   <string>Deadzone of the right stick. Movements smaller than this value are ignored.</string>
+                  </property>
                   <property name="maximum">
                    <number>100</number>
                   </property>
@@ -2804,6 +2834,9 @@
                 </item>
                 <item>
                  <widget class="QSlider" name="sliderRStickModifierRange">
+                  <property name="toolTip">
+                   <string>Range of the right stick while the modifier button is held.</string>
+                  </property>
                   <property name="maximum">
                    <number>100</number>
                   </property>

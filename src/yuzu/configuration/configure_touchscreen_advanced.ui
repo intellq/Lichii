@@ -100,13 +100,25 @@
        </widget>
       </item>
       <item row="0" column="2">
-       <widget class="QSpinBox" name="diameter_x_box"/>
+       <widget class="QSpinBox" name="diameter_x_box">
+        <property name="toolTip">
+         <string>Horizontal diameter of the touch point.</string>
+        </property>
+       </widget>
       </item>
       <item row="1" column="2">
-       <widget class="QSpinBox" name="diameter_y_box"/>
+       <widget class="QSpinBox" name="diameter_y_box">
+        <property name="toolTip">
+         <string>Vertical diameter of the touch point.</string>
+        </property>
+       </widget>
       </item>
       <item row="2" column="2">
-       <widget class="QSpinBox" name="angle_box"/>
+       <widget class="QSpinBox" name="angle_box">
+        <property name="toolTip">
+         <string>Rotation angle of the touch point.</string>
+        </property>
+       </widget>
       </item>
      </layout>
     </widget>

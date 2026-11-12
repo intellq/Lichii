@@ -45,7 +45,11 @@
            </widget>
           </item>
           <item>
-           <widget class="QComboBox" name="language_combobox"/>
+           <widget class="QComboBox" name="language_combobox">
+            <property name="toolTip">
+             <string>Language of the emulator interface. Takes effect after restarting.</string>
+            </property>
+           </widget>
           </item>
          </layout>
         </item>
@@ -59,7 +63,11 @@
            </widget>
           </item>
           <item>
-           <widget class="QComboBox" name="theme_combobox"/>
+           <widget class="QComboBox" name="theme_combobox">
+            <property name="toolTip">
+             <string>Visual theme of the emulator interface.</string>
+            </property>
+           </widget>
           </item>
          </layout>
         </item>
@@ -78,6 +86,9 @@
        <layout class="QVBoxLayout" name="GeneralVerticalLayout">
         <item>
          <widget class="QCheckBox" name="show_add_ons">
+          <property name="toolTip">
+           <string>Shows the Add-Ons column in the game list.</string>
+          </property>
           <property name="text">
            <string>Show Add-Ons Column</string>
           </property>
@@ -85,6 +96,9 @@
         </item>
         <item>
          <widget class="QCheckBox" name="show_size">
+          <property name="toolTip">
+           <string>Shows the Size column in the game list.</string>
+          </property>
           <property name="text">
            <string>Show Size Column</string>
           </property>
@@ -92,6 +106,9 @@
         </item>
         <item>
          <widget class="QCheckBox" name="show_types">
+          <property name="toolTip">
+           <string>Shows the File Types column in the game list.</string>
+          </property>
           <property name="text">
            <string>Show File Types Column</string>
           </property>
@@ -99,6 +116,9 @@
         </item>
         <item>
          <widget class="QCheckBox" name="show_play_time">
+          <property name="toolTip">
+           <string>Shows the Play Time column in the game list.</string>
+          </property>
           <property name="text">
            <string>Show Play Time Column</string>
           </property>
@@ -114,7 +134,11 @@
            </widget>
           </item>
           <item>
-           <widget class="QComboBox" name="folder_icon_size_combobox"/>
+           <widget class="QComboBox" name="folder_icon_size_combobox">
+            <property name="toolTip">
+             <string>Size of folder icons in the game list.</string>
+            </property>
+           </widget>
           </item>
          </layout>
         </item>
@@ -128,7 +152,11 @@
            </widget>
           </item>
           <item>
-           <widget class="QComboBox" name="row_1_text_combobox"/>
+           <widget class="QComboBox" name="row_1_text_combobox">
+            <property name="toolTip">
+             <string>Information shown on the first line of each game entry in the game list.</string>
+            </property>
+           </widget>
           </item>
          </layout>
         </item>
@@ -142,7 +170,11 @@
            </widget>
           </item>
           <item>
-           <widget class="QComboBox" name="row_2_text_combobox"/>
+           <widget class="QComboBox" name="row_2_text_combobox">
+            <property name="toolTip">
+             <string>Information shown on the second line of each game entry in the game list.</string>
+            </property>
+           </widget>
           </item>
          </layout>
         </item>
@@ -161,6 +193,9 @@
        <layout class="QVBoxLayout" name="verticalLayout_3">
         <item>
          <widget class="QCheckBox" name="enable_screenshot_save_as">
+          <property name="toolTip">
+           <string>Asks where to save each screenshot instead of saving it to the screenshot folder automatically.</string>
+          </property>
           <property name="text">
            <string>Ask Where To Save Screenshots (Windows Only)</string>
           </property>
@@ -176,7 +211,11 @@
            </widget>
           </item>
           <item>
-           <widget class="QLineEdit" name="screenshot_path_edit"/>
+           <widget class="QLineEdit" name="screenshot_path_edit">
+            <property name="toolTip">
+             <string>Folder where screenshots are saved.</string>
+            </property>
+           </widget>
           </item>
           <item>
            <widget class="QToolButton" name="screenshot_path_button">
@@ -206,6 +245,9 @@
             </item>
             <item>
              <widget class="QComboBox" name="screenshot_height">
+              <property name="toolTip">
+               <string>Height of saved screenshots. Auto uses the current window size.</string>
+              </property>
               <property name="editable">
                <bool>true</bool>
               </property>

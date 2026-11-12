@@ -59,7 +59,11 @@
            </widget>
          </item>
         <item>
-         <widget class="QComboBox" name="touch_from_button_map"/>
+         <widget class="QComboBox" name="touch_from_button_map">
+          <property name="toolTip">
+           <string>Selects the touch from button profile that maps buttons to touch points.</string>
+          </property>
+         </widget>
         </item>
         <item>
          <widget class="QPushButton" name="touch_from_button_config_btn">
@@ -137,6 +141,9 @@
             </item>
             <item>
              <widget class="QLineEdit" name="udp_server">
+              <property name="toolTip">
+               <string>IP address of the UDP server that provides motion input.</string>
+              </property>
               <property name="sizePolicy">
                <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
                 <horstretch>0</horstretch>
@@ -164,6 +171,9 @@
             </item>
             <item>
              <widget class="QLineEdit" name="udp_port">
+              <property name="toolTip">
+               <string>Port of the UDP server that provides motion input.</string>
+              </property>
               <property name="sizePolicy">
                <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
                 <horstretch>0</horstretch>

@@ -2424,6 +2424,10 @@ Ao ativar, ignora esses avisos e encerra diretamente a emulação.</translation>
         <source>Auto</source>
         <translation>Automático</translation>
     </message>
+    <message>
+        <source>Camera used as the source for the emulated infrared camera.</source>
+        <translation>Câmera usada como fonte da câmera infravermelha emulada.</translation>
+    </message>
 </context>
 <context>
     <name>ConfigureCpu</name>
@@ -2992,6 +2996,70 @@ Ao ativar, ignora esses avisos e encerra diretamente a emulação.</translation>
         <source>**This will be reset automatically when Eden closes.</source>
         <translation>**Reseterá automaticamente quando o Eden fechar.</translation>
     </message>
+    <message>
+        <source>Starts a GDB stub server so a debugger can attach to the emulated program.</source>
+        <translation>Inicia um servidor GDB stub para que um depurador possa se conectar ao programa emulado.</translation>
+    </message>
+    <message>
+        <source>TCP port the GDB stub listens on.</source>
+        <translation>Porta TCP em que o GDB stub escuta.</translation>
+    </message>
+    <message>
+        <source>Also prints the log to the console window.</source>
+        <translation>Também exibe o log na janela do console.</translation>
+    </message>
+    <message>
+        <source>Enables a hotkey to capture a frame with RenderDoc. Only useful for graphics debugging.</source>
+        <translation>Ativa uma tecla de atalho para capturar um quadro com o RenderDoc. Útil apenas para depuração gráfica.</translation>
+    </message>
+    <message>
+        <source>Disables the web applet. Games that try to open a web page will not show it.</source>
+        <translation>Desativa o applet da web. Jogos que tentarem abrir uma página da web não a exibirão.</translation>
+    </message>
+    <message>
+        <source>Makes every controller type available for selection, including types that real consoles do not normally offer.</source>
+        <translation>Disponibiliza todos os tipos de controle para seleção, inclusive tipos que consoles reais normalmente não oferecem.</translation>
+    </message>
+    <message>
+        <source>Automatically stubs unimplemented services instead of stopping emulation. Can hide problems or cause unexpected behavior.</source>
+        <translation>Substitui automaticamente serviços não implementados por stubs em vez de interromper a emulação. Pode esconder problemas ou causar comportamentos inesperados.</translation>
+    </message>
+    <message>
+        <source>Runs the system in kiosk (Quest) mode.</source>
+        <translation>Executa o sistema no modo quiosque (Quest).</translation>
+    </message>
+    <message>
+        <source>Loads dev.keys instead of prod.keys for decryption.</source>
+        <translation>Carrega o dev.keys em vez do prod.keys para a descriptografia.</translation>
+    </message>
+    <message>
+        <source>Enables debug assertions, which stop emulation when an internal check fails.</source>
+        <translation>Ativa asserções de depuração, que interrompem a emulação quando uma verificação interna falha.</translation>
+    </message>
+    <message>
+        <source>Flushes the log file after every line. Slower, but keeps the log complete if the emulator crashes.</source>
+        <translation>Grava o arquivo de log a cada linha. Mais lento, mas mantém o log completo se o emulador travar.</translation>
+    </message>
+    <message>
+        <source>Logs file system accesses made by the emulated program.</source>
+        <translation>Registra os acessos ao sistema de arquivos feitos pelo programa emulado.</translation>
+    </message>
+    <message>
+        <source>Enables verbose logging of the reporting services. This can produce very large logs.</source>
+        <translation>Ativa o log detalhado dos serviços de relatório. Isso pode gerar logs muito grandes.</translation>
+    </message>
+    <message>
+        <source>Hides the username in the log output.</source>
+        <translation>Oculta o nome de usuário na saída do log.</translation>
+    </message>
+    <message>
+        <source>Filter that limits which log classes and levels are written, for example "*:Info Service:Debug".</source>
+        <translation>Filtro que limita quais classes e níveis de log são gravados, por exemplo "*:Info Service:Debug".</translation>
+    </message>
+    <message>
+        <source>Arguments passed to the program when it starts, for homebrew that reads command line arguments. Can only be changed while no game is running.</source>
+        <translation>Argumentos passados ao programa ao iniciar, para homebrews que leem argumentos de linha de comando. Só podem ser alterados enquanto nenhum jogo estiver em execução.</translation>
+    </message>
 </context>
 <context>
     <name>ConfigureDebugController</name>
@@ -3356,6 +3424,50 @@ Would you like to delete the old save data?</source>
         <translation>Salvamento foi migrado com sucesso
 
 Gostaria de deletar o salvamento antigo?</translation>
+    </message>
+    <message>
+        <source>Makes the emulated game card appear as inserted.</source>
+        <translation>Faz o cartucho emulado aparecer como inserido.</translation>
+    </message>
+    <message>
+        <source>Uses the currently running game as the emulated game card.</source>
+        <translation>Usa o jogo em execução como cartucho emulado.</translation>
+    </message>
+    <message>
+        <source>Writes decompressed NSOs to the dump directory when a game is loaded.</source>
+        <translation>Grava NSOs descomprimidos no diretório de extração quando um jogo é carregado.</translation>
+    </message>
+    <message>
+        <source>Writes the ExeFS of the game to the dump directory when it is loaded.</source>
+        <translation>Grava o ExeFS do jogo no diretório de extração quando ele é carregado.</translation>
+    </message>
+    <message>
+        <source>Caches game metadata so the game list loads faster. Turn it off if the list shows outdated information.</source>
+        <translation>Guarda em cache os metadados dos jogos para que a lista carregue mais rápido. Desative se a lista mostrar informações desatualizadas.</translation>
+    </message>
+    <message>
+        <source>Directory used to store the emulated NAND.</source>
+        <translation>Diretório usado para armazenar a NAND emulada.</translation>
+    </message>
+    <message>
+        <source>Directory used to store the emulated SD card.</source>
+        <translation>Diretório usado para armazenar o cartão SD emulado.</translation>
+    </message>
+    <message>
+        <source>Directory used to store save data.</source>
+        <translation>Diretório usado para armazenar os dados salvos.</translation>
+    </message>
+    <message>
+        <source>Path of the game card image to use for the emulated game card slot.</source>
+        <translation>Caminho da imagem de cartucho usada no slot de cartucho emulado.</translation>
+    </message>
+    <message>
+        <source>Directory where the emulator looks for modifications (mods) to load.</source>
+        <translation>Diretório onde o emulador procura modificações (mods) para carregar.</translation>
+    </message>
+    <message>
+        <source>Directory where dumped game data is written.</source>
+        <translation>Diretório onde os dados extraídos dos jogos são gravados.</translation>
     </message>
 </context>
 <context>
@@ -3796,6 +3908,18 @@ Gostaria de deletar o salvamento antigo?</translation>
         <source>Clear</source>
         <translation>Limpar</translation>
     </message>
+    <message>
+        <source>Emulates the console in docked mode.</source>
+        <translation>Emula o console no modo dock.</translation>
+    </message>
+    <message>
+        <source>Emulates the console in handheld mode.</source>
+        <translation>Emula o console no modo portátil.</translation>
+    </message>
+    <message>
+        <source>Connects the controller of Player 1.</source>
+        <translation>Conecta o controle do Jogador 1.</translation>
+    </message>
 </context>
 <context>
     <name>ConfigureInputAdvanced</name>
@@ -4011,6 +4135,42 @@ Gostaria de deletar o salvamento antigo?</translation>
         <location filename="../../src/yuzu/configuration/configure_input_advanced.ui" line="2772"/>
         <source>Disable SDL WGI/XInput (Requires restart)</source>
         <translation type="unfinished"/>
+    </message>
+    <message>
+        <source>Allows games to receive input from the keyboard as a device.</source>
+        <translation>Permite que os jogos recebam entrada do teclado como dispositivo.</translation>
+    </message>
+    <message>
+        <source>Allows games to receive input from the mouse as a device.</source>
+        <translation>Permite que os jogos recebam entrada do mouse como dispositivo.</translation>
+    </message>
+    <message>
+        <source>Allows games to receive touchscreen input.</source>
+        <translation>Permite que os jogos recebam entrada da tela sensível ao toque.</translation>
+    </message>
+    <message>
+        <source>Enables the debug controller input device.</source>
+        <translation>Ativa o dispositivo de entrada do controle de depuração.</translation>
+    </message>
+    <message>
+        <source>Enables the Ring-Con controller input.</source>
+        <translation>Ativa a entrada do controle Ring-Con.</translation>
+    </message>
+    <message>
+        <source>Enables the infrared camera input, using a camera or an image.</source>
+        <translation>Ativa a entrada da câmera infravermelha, usando uma câmera ou uma imagem.</translation>
+    </message>
+    <message>
+        <source>Lets the keyboard drive analog sticks, with the stick moving gradually instead of jumping to full tilt.</source>
+        <translation>Permite que o teclado controle os analógicos, com o analógico se movendo gradualmente em vez de ir direto ao máximo.</translation>
+    </message>
+    <message>
+        <source>Enables UDP controller input. It is not needed for motion input.</source>
+        <translation>Ativa a entrada de controles via UDP. Não é necessário para a entrada de movimento.</translation>
+    </message>
+    <message>
+        <source>Allows a controller to navigate the emulator interface.</source>
+        <translation>Permite usar um controle para navegar pela interface do emulador.</translation>
     </message>
 </context>
 <context>
@@ -4576,6 +4736,50 @@ Para inverter os eixos, mova o seu analógico primeiro verticalmente e depois ho
         <source>Failed to save the input profile &quot;%1&quot;</source>
         <translation>Falha ao salvar o perfil de controle &quot;%1&quot;</translation>
     </message>
+    <message>
+        <source>Type of controller emulated for this player.</source>
+        <translation>Tipo de controle emulado para este jogador.</translation>
+    </message>
+    <message>
+        <source>Input device used for this player. Pick the device whose buttons you want to map.</source>
+        <translation>Dispositivo de entrada usado por este jogador. Escolha o dispositivo cujos botões você quer mapear.</translation>
+    </message>
+    <message>
+        <source>Saved input profile. Selecting one loads its mappings for this player.</source>
+        <translation>Perfil de entrada salvo. Selecionar um carrega seus mapeamentos para este jogador.</translation>
+    </message>
+    <message>
+        <source>Range of the left stick. Lower values reduce how far the stick reports.</source>
+        <translation>Alcance do analógico esquerdo. Valores menores reduzem até onde o analógico reporta.</translation>
+    </message>
+    <message>
+        <source>Range of the right stick. Lower values reduce how far the stick reports.</source>
+        <translation>Alcance do analógico direito. Valores menores reduzem até onde o analógico reporta.</translation>
+    </message>
+    <message>
+        <source>Deadzone of the left stick. Movements smaller than this value are ignored.</source>
+        <translation>Zona morta do analógico esquerdo. Movimentos menores que este valor são ignorados.</translation>
+    </message>
+    <message>
+        <source>Deadzone of the right stick. Movements smaller than this value are ignored.</source>
+        <translation>Zona morta do analógico direito. Movimentos menores que este valor são ignorados.</translation>
+    </message>
+    <message>
+        <source>Range of the left stick while the modifier button is held.</source>
+        <translation>Alcance do analógico esquerdo enquanto o botão modificador é mantido pressionado.</translation>
+    </message>
+    <message>
+        <source>Range of the right stick while the modifier button is held.</source>
+        <translation>Alcance do analógico direito enquanto o botão modificador é mantido pressionado.</translation>
+    </message>
+    <message>
+        <source>Pressure threshold at which the ZL trigger counts as pressed.</source>
+        <translation>Limite de pressão a partir do qual o gatilho ZL conta como pressionado.</translation>
+    </message>
+    <message>
+        <source>Pressure threshold at which the ZR trigger counts as pressed.</source>
+        <translation>Limite de pressão a partir do qual o gatilho ZR conta como pressionado.</translation>
+    </message>
 </context>
 <context>
     <name>ConfigureInputProfileDialog</name>
@@ -4740,6 +4944,18 @@ Para inverter os eixos, mova o seu analógico primeiro verticalmente e depois ho
         <source>UDP Test or calibration configuration is in progress.&lt;br&gt;Please wait for them to finish.</source>
         <translation>Teste UDP ou configuração de calibragem em progresso.&lt;br&gt; Por favor espera que termine.</translation>
     </message>
+    <message>
+        <source>IP address of the UDP server that provides motion input.</source>
+        <translation>Endereço IP do servidor UDP que fornece a entrada de movimento.</translation>
+    </message>
+    <message>
+        <source>Port of the UDP server that provides motion input.</source>
+        <translation>Porta do servidor UDP que fornece a entrada de movimento.</translation>
+    </message>
+    <message>
+        <source>Selects the touch from button profile that maps buttons to touch points.</source>
+        <translation>Seleciona o perfil de toque por botões que associa botões a pontos de toque.</translation>
+    </message>
 </context>
 <context>
     <name>ConfigureMousePanning</name>
@@ -4839,6 +5055,26 @@ Os valores atuais são %1% e %2% respectivamente.</translation>
         <source>Real mouse input and mouse panning are incompatible. Please disable the emulated mouse in input advanced settings to allow mouse panning.</source>
         <translation>Controle de mouse real e controle panorâmico do mouse são incompatíveis. Por favor desabilite a emulação do mouse em configurações avançadas de controles para permitir o controle panorâmico do mouse.</translation>
     </message>
+    <message>
+        <source>Horizontal sensitivity of mouse panning.</source>
+        <translation>Sensibilidade horizontal do movimento do mouse.</translation>
+    </message>
+    <message>
+        <source>Vertical sensitivity of mouse panning.</source>
+        <translation>Sensibilidade vertical do movimento do mouse.</translation>
+    </message>
+    <message>
+        <source>Compensates for the controller deadzone so small mouse movements still register.</source>
+        <translation>Compensa a zona morta do controle para que pequenos movimentos do mouse ainda sejam registrados.</translation>
+    </message>
+    <message>
+        <source>How quickly the panning stick returns to center when the mouse stops moving. Stronger values return faster at larger deflections.</source>
+        <translation>A rapidez com que o analógico volta ao centro quando o mouse para de se mover. Valores maiores retornam mais rápido em deflexões maiores.</translation>
+    </message>
+    <message>
+        <source>Minimum decay applied to the panning stick on every update.</source>
+        <translation>Decaimento mínimo aplicado ao analógico a cada atualização.</translation>
+    </message>
 </context>
 <context>
     <name>ConfigureNetwork</name>
@@ -4866,6 +5102,22 @@ Os valores atuais são %1% e %2% respectivamente.</translation>
         <location filename="../../src/yuzu/configuration/configure_network.ui" line="41"/>
         <source>Enable Airplane Mode</source>
         <translation>Habilitar Modo Avião</translation>
+    </message>
+    <message>
+        <source>Emulates the console with airplane mode on, so games see no network connection. It is turned off when online play through Nextendo Network is enabled.</source>
+        <translation>Emula o console com o modo avião ligado, de modo que os jogos não veem conexão de rede. É desativado quando o jogo online pela Nextendo Network está ativado.</translation>
+    </message>
+    <message>
+        <source>Lets games play online through nextendo.network. Requires signing in with a nextendo.network account.</source>
+        <translation>Permite que os jogos joguem online pela nextendo.network. Exige entrar com uma conta da nextendo.network.</translation>
+    </message>
+    <message>
+        <source>Network interface the emulated console uses to connect to the network.</source>
+        <translation>Interface de rede que o console emulado usa para se conectar à rede.</translation>
+    </message>
+    <message>
+        <source>Client ID used for nextendo.network. If left empty, the default is used.</source>
+        <translation>ID de cliente usado na nextendo.network. Se ficar vazio, o padrão é usado.</translation>
     </message>
 </context>
 <context>
@@ -5476,6 +5728,10 @@ UUID: %2</translation>
         <source>[waiting]</source>
         <translation>[em espera]</translation>
     </message>
+    <message>
+        <source>Deadzone of the Ring-Con analog input. Movements smaller than this value are ignored.</source>
+        <translation>Zona morta da entrada analógica do Ring-Con. Movimentos menores que este valor são ignorados.</translation>
+    </message>
 </context>
 <context>
     <name>ConfigureSystem</name>
@@ -5562,6 +5818,26 @@ UUID: %2</translation>
         <location filename="../../src/yuzu/configuration/configure_tas.ui" line="111"/>
         <source>...</source>
         <translation>...</translation>
+    </message>
+    <message>
+        <source>Enables reading controller input from TAS scripts.</source>
+        <translation>Ativa a leitura de entradas do controle a partir de scripts TAS.</translation>
+    </message>
+    <message>
+        <source>Restarts the script from the beginning when it ends.</source>
+        <translation>Reinicia o script desde o começo quando ele termina.</translation>
+    </message>
+    <message>
+        <source>Pauses script execution while the game is loading.</source>
+        <translation>Pausa a execução do script enquanto o jogo carrega.</translation>
+    </message>
+    <message>
+        <source>Shows a dialog asking whether to save the recording when it ends.</source>
+        <translation>Mostra uma caixa de diálogo perguntando se a gravação deve ser salva quando ela termina.</translation>
+    </message>
+    <message>
+        <source>Directory where TAS scripts are read from and recordings are saved.</source>
+        <translation>Diretório de onde os scripts TAS são lidos e onde as gravações são salvas.</translation>
     </message>
 </context>
 <context>
@@ -5705,6 +5981,18 @@ Arrasta os pontos para mudar a posição, ou dá duplo-clique nas células da ta
         <location filename="../../src/yuzu/configuration/configure_touchscreen_advanced.ui" line="132"/>
         <source>Restore Defaults</source>
         <translation>Restaurar Padrões</translation>
+    </message>
+    <message>
+        <source>Horizontal diameter of the touch point.</source>
+        <translation>Diâmetro horizontal do ponto de toque.</translation>
+    </message>
+    <message>
+        <source>Vertical diameter of the touch point.</source>
+        <translation>Diâmetro vertical do ponto de toque.</translation>
+    </message>
+    <message>
+        <source>Rotation angle of the touch point.</source>
+        <translation>Ângulo de rotação do ponto de toque.</translation>
     </message>
 </context>
 <context>
@@ -5873,6 +6161,54 @@ Arrasta os pontos para mudar a posição, ou dá duplo-clique nas células da ta
         <source>Auto (%1 x %2, %3 x %4)</source>
         <comment>Screenshot width value</comment>
         <translation>Auto (%1 x %2, %3 x %4)</translation>
+    </message>
+    <message>
+        <source>Shows the Add-Ons column in the game list.</source>
+        <translation>Mostra a coluna de Add-Ons na lista de jogos.</translation>
+    </message>
+    <message>
+        <source>Shows the Size column in the game list.</source>
+        <translation>Mostra a coluna de Tamanho na lista de jogos.</translation>
+    </message>
+    <message>
+        <source>Shows the File Types column in the game list.</source>
+        <translation>Mostra a coluna de Tipos de Arquivo na lista de jogos.</translation>
+    </message>
+    <message>
+        <source>Shows the Play Time column in the game list.</source>
+        <translation>Mostra a coluna de Tempo de Jogo na lista de jogos.</translation>
+    </message>
+    <message>
+        <source>Asks where to save each screenshot instead of saving it to the screenshot folder automatically.</source>
+        <translation>Pergunta onde salvar cada captura de tela em vez de salvá-la automaticamente na pasta de capturas.</translation>
+    </message>
+    <message>
+        <source>Height of saved screenshots. Auto uses the current window size.</source>
+        <translation>Altura das capturas de tela salvas. Automático usa o tamanho atual da janela.</translation>
+    </message>
+    <message>
+        <source>Language of the emulator interface. Takes effect after restarting.</source>
+        <translation>Idioma da interface do emulador. Entra em vigor após reiniciar.</translation>
+    </message>
+    <message>
+        <source>Visual theme of the emulator interface.</source>
+        <translation>Tema visual da interface do emulador.</translation>
+    </message>
+    <message>
+        <source>Size of folder icons in the game list.</source>
+        <translation>Tamanho dos ícones de pasta na lista de jogos.</translation>
+    </message>
+    <message>
+        <source>Information shown on the first line of each game entry in the game list.</source>
+        <translation>Informação mostrada na primeira linha de cada jogo na lista de jogos.</translation>
+    </message>
+    <message>
+        <source>Information shown on the second line of each game entry in the game list.</source>
+        <translation>Informação mostrada na segunda linha de cada jogo na lista de jogos.</translation>
+    </message>
+    <message>
+        <source>Folder where screenshots are saved.</source>
+        <translation>Pasta onde as capturas de tela são salvas.</translation>
     </message>
 </context>
 <context>

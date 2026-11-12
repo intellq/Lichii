@@ -155,6 +155,9 @@
          </property>
          <item>
           <widget class="QRadioButton" name="radioDocked">
+           <property name="toolTip">
+            <string>Emulates the console in docked mode.</string>
+           </property>
            <property name="text">
             <string>Docked</string>
            </property>
@@ -165,6 +168,9 @@
          </item>
          <item>
           <widget class="QRadioButton" name="radioUndocked">
+           <property name="toolTip">
+            <string>Emulates the console in handheld mode.</string>
+           </property>
            <property name="text">
             <string>Handheld</string>
            </property>
@@ -344,6 +350,9 @@
          </item>
          <item row="1" column="1">
           <widget class="QCheckBox" name="checkboxPlayer1Connected">
+           <property name="toolTip">
+            <string>Connects the controller of Player 1.</string>
+           </property>
            <property name="layoutDirection">
             <enum>Qt::LeftToRight</enum>
            </property>

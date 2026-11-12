@@ -2535,6 +2535,9 @@
               <layout class="QGridLayout" name="emulatedDevicesGridLayout">
                <item row="0" column="0">
                 <widget class="QCheckBox" name="keyboard_enabled">
+                 <property name="toolTip">
+                  <string>Allows games to receive input from the keyboard as a device.</string>
+                 </property>
                  <property name="minimumSize">
                   <size>
                    <width>0</width>
@@ -2548,6 +2551,9 @@
                </item>
                 <item row="1" column="0">
                   <widget class="QCheckBox" name="mouse_enabled">
+                   <property name="toolTip">
+                    <string>Allows games to receive input from the mouse as a device.</string>
+                   </property>
                     <property name="minimumSize">
                       <size>
                         <width>0</width>
@@ -2561,6 +2567,9 @@
                 </item>
                 <item row="2" column="0">
                   <widget class="QCheckBox" name="touchscreen_enabled">
+                   <property name="toolTip">
+                    <string>Allows games to receive touchscreen input.</string>
+                   </property>
                     <property name="text">
                       <string>Touchscreen</string>
                     </property>
@@ -2591,6 +2600,9 @@
                 </item>
                <item row="3" column="0">
                 <widget class="QCheckBox" name="debug_enabled">
+                 <property name="toolTip">
+                  <string>Enables the debug controller input device.</string>
+                 </property>
                  <property name="text">
                   <string>Debug Controller</string>
                  </property>
@@ -2605,6 +2617,9 @@
                </item>
                <item row="4" column="0">
                 <widget class="QCheckBox" name="enable_ring_controller">
+                 <property name="toolTip">
+                  <string>Enables the Ring-Con controller input.</string>
+                 </property>
                  <property name="text">
                   <string>Ring Controller</string>
                  </property>
@@ -2619,6 +2634,9 @@
                </item>
                <item row="5" column="0">
                 <widget class="QCheckBox" name="enable_ir_sensor">
+                 <property name="toolTip">
+                  <string>Enables the infrared camera input, using a camera or an image.</string>
+                 </property>
                  <property name="text">
                   <string>Infrared Camera</string>
                  </property>
@@ -2642,6 +2660,9 @@
                  <layout class="QGridLayout" name="OtherGridLayout">
                    <item row="1" column="0">
                      <widget class="QCheckBox" name="emulate_analog_keyboard">
+                      <property name="toolTip">
+                       <string>Lets the keyboard drive analog sticks, with the stick moving gradually instead of jumping to full tilt.</string>
+                      </property>
                        <property name="minimumSize">
                          <size>
                            <width>0</width>
@@ -2671,6 +2692,9 @@
                    </item>
                    <item row="3" column="0">
                      <widget class="QCheckBox" name="enable_udp_controller">
+                      <property name="toolTip">
+                       <string>Enables UDP controller input. It is not needed for motion input.</string>
+                      </property>
                        <property name="minimumSize">
                          <size>
                            <width>0</width>
@@ -2684,6 +2708,9 @@
                    </item>
                    <item row="4" column="0">
                      <widget class="QCheckBox" name="controller_navigation">
+                      <property name="toolTip">
+                       <string>Allows a controller to navigate the emulator interface.</string>
+                      </property>
                        <property name="minimumSize">
                          <size>
                            <width>0</width>

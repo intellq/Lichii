@@ -214,6 +214,9 @@
         </item>
         <item>
          <widget class="QSlider" name="sliderRingAnalogDeadzone">
+          <property name="toolTip">
+           <string>Deadzone of the Ring-Con analog input. Movements smaller than this value are ignored.</string>
+          </property>
           <property name="maximum">
            <number>100</number>
           </property>
