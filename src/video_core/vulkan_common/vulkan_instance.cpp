@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cstddef>
+#include <cstdlib>
 #include <future>
 #include <optional>
 #include <span>
@@ -13,6 +14,7 @@
 #include "common/common_types.h"
 #include "common/dynamic_library.h"
 #include "common/logging.h"
+#include "common/settings.h"
 #include <ranges>
 #include <vulkan/vulkan_core.h>
 #include "core/frontend/emu_window.h"
@@ -142,6 +144,14 @@ void RemoveUnavailableLayers(const vk::InstanceDispatch& dld, std::vector<const 
 vk::Instance CreateInstance(const Common::DynamicLibrary& library, vk::InstanceDispatch& dld,
                             u32 required_version, Core::Frontend::WindowSystemType window_type,
                             bool enable_validation) {
+#if defined(__linux__) && !defined(__ANDROID__)
+    // RADV exposes VK_NV_cooperative_matrix2, which fsr4-vk's FP8 network (RDNA 4) needs, only with
+    // this option, read when the instance is created. A value already set is kept.
+    if (Settings::values.ocarina_fsr.GetValue() &&
+        Settings::values.ocarina_fsr_version.GetValue() == Settings::OcarinaFsrVersion::Fsr4) {
+        setenv("radv_cooperative_matrix2_nv", "true", 0);
+    }
+#endif
     if (!library.IsOpen()) {
         LOG_ERROR(Render_Vulkan, "Vulkan library not available");
         throw vk::Exception(VK_ERROR_INITIALIZATION_FAILED);
