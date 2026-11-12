@@ -158,6 +158,8 @@ ENUM(HdrMode, Off, On, Auto);
 ENUM(HdrSwapchain, Hdr10, Scrgb);
 ENUM(AspectRatio, R16_9, R4_3, R21_9, R16_10, Stretch);
 ENUM(ConsoleMode, Handheld, Docked);
+
+ENUM(TextSpeed, Normal, Double, Quadruple, Instant);
 ENUM(AppletMode, HLE, LLE, Disabled);
 ENUM(SpirvOptimizeMode, Never, OnLoad, Always);
 ENUM(GpuClock, Normal, Boost, Overclock)

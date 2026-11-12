@@ -939,6 +939,10 @@ struct Values {
                                                    Specialization::Radio,
                                                    true,
                                                    true};
+    // How fast dialogue text appears, in games with a built-in text speed patch
+    // (core/file_sys/patch_manager.cpp). Normal leaves the game as shipped.
+    SwitchableSetting<TextSpeed> text_speed{linkage, TextSpeed::Normal, "text_speed",
+                                            Category::System};
 
     // Controls
     InputSetting<std::array<PlayerInput, 10>> players;

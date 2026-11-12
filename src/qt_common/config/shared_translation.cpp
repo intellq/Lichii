@@ -572,6 +572,10 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Selects if the console is in Docked or Handheld mode.\nGames will change "
               "their resolution, details and supported controllers and depending on this setting.\n"
               "Setting to Handheld can help improve performance for low end systems."));
+    INSERT(Settings, text_speed, tr("Text speed:"),
+           tr("How fast dialogue text appears, in games with a built-in text speed patch "
+              "(title 0400486024DEC000).\nNormal leaves the game as shipped. Text that closes by "
+              "itself in cutscenes keeps its timing.\nTakes effect when a game starts."));
     INSERT(Settings, current_user, QString(), QString());
 
     // Controls
@@ -946,6 +950,13 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(MemoryLayout, Memory_8Gb, tr("8GB DRAM")),
                               PAIR(MemoryLayout, Memory_10Gb, tr("10GB DRAM (Unsafe)")),
                               PAIR(MemoryLayout, Memory_12Gb, tr("12GB DRAM (Switch 2)")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::TextSpeed>::Index(),
+                          {
+                              PAIR(TextSpeed, Normal, tr("Normal")),
+                              PAIR(TextSpeed, Double, tr("2x")),
+                              PAIR(TextSpeed, Quadruple, tr("4x")),
+                              PAIR(TextSpeed, Instant, tr("Instant")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::ConsoleMode>::Index(),
                           {

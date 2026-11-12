@@ -854,3 +854,56 @@ TEST_CASE("Dark's standalone Dynamic FPS mod is skipped and hidden for the built
         REQUIRE(listed(context.Manager(), "Other mod"));
     }
 }
+
+TEST_CASE("Built-in text speed follows the text_speed setting", "[patch_manager]") {
+    constexpr size_t SiteOffset = sizeof(Loader::NSOHeader) + 0xAFE1B4;
+    constexpr size_t CaveOffset = sizeof(Loader::NSOHeader) + 0x3C46F00;
+    constexpr u32 LdrhInstruction = 0x7940DE69;
+    constexpr u32 BranchToCave = 0x14C52353;
+    PatchManagerTestContext context;
+    const auto manager = context.Manager();
+    auto nso = MakeDynamicMain();
+    std::memcpy(nso.data() + SiteOffset, &LdrhInstruction, sizeof(LdrhInstruction));
+    struct SettingScope {
+        ~SettingScope() {
+            Settings::values.text_speed.SetValue(Settings::TextSpeed::Normal);
+        }
+    } scope;
+
+    SECTION("Normal leaves the game alone") {
+        const auto patched = manager.PatchNSO(nso, "main");
+        REQUIRE(WordAt(patched, SiteOffset) == LdrhInstruction);
+        REQUIRE(WordAt(patched, CaveOffset) == 0);
+    }
+
+    SECTION("Each speed branches to the cave with its scale") {
+        const std::array<std::pair<Settings::TextSpeed, u32>, 3> speeds{{
+            {Settings::TextSpeed::Double, 0x40000000},    // 2.0f
+            {Settings::TextSpeed::Quadruple, 0x40800000}, // 4.0f
+            {Settings::TextSpeed::Instant, 0x49742400},   // 1e6f
+        }};
+        for (const auto& [speed, scale] : speeds) {
+            Settings::values.text_speed.SetValue(speed);
+            const auto patched = manager.PatchNSO(nso, "main");
+            REQUIRE(WordAt(patched, SiteOffset) == BranchToCave);
+            REQUIRE(Common::HexToString(std::span{patched}.subspan(CaveOffset, 16)) ==
+                    "9000001C0008301E69DE4079ABDC3A17");
+            REQUIRE(WordAt(patched, CaveOffset + 16) == scale);
+        }
+    }
+
+    SECTION("Another word at the site skips") {
+        Settings::values.text_speed.SetValue(Settings::TextSpeed::Double);
+        std::memcpy(nso.data() + SiteOffset, &NopInstruction, sizeof(NopInstruction));
+        const auto patched = manager.PatchNSO(nso, "main");
+        REQUIRE(WordAt(patched, SiteOffset) == NopInstruction);
+        REQUIRE(WordAt(patched, CaveOffset) == 0);
+    }
+
+    SECTION("Not listed in Add-Ons") {
+        Settings::values.text_speed.SetValue(Settings::TextSpeed::Double);
+        for (const auto& patch : manager.GetPatches()) {
+            REQUIRE(patch.name.find("Text Speed") == std::string::npos);
+        }
+    }
+}
