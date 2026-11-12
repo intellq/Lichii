@@ -131,9 +131,6 @@ u32 SaturatingSub(u32 lhs, u32 rhs) {
 
 // Whether a descriptor is an array, which the descriptor limits shrink. A texture the shader
 // indexes stays one when they leave it a single element.
-[[nodiscard]] bool IsDescriptorArray(const TextureBufferDescriptor& desc) noexcept {
-    return desc.count > 1;
-}
 [[nodiscard]] bool IsDescriptorArray(const TextureDescriptor& desc) noexcept {
     return desc.count > 1 || desc.is_descriptor_array;
 }
