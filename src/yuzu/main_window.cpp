@@ -5885,7 +5885,9 @@ void MainWindow::UpdateFrameGenButton() {
 
 void MainWindow::UpdateUpscalerButton() {
     const bool dlss = Settings::values.nvidia_dlss.GetValue();
-    const bool fsr = Settings::values.ocarina_fsr.GetValue();
+    // FSR 4 runs in place of FSR 3.1, so turning it on alone also replaces the game's upscaler.
+    const bool fsr =
+        Settings::values.ocarina_fsr.GetValue() || Settings::values.amd_fsr4.GetValue();
     const QString sizes = tr("%1x%2 to %3x%4")
                               .arg(upscaler_render_width)
                               .arg(upscaler_render_height)
