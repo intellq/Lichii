@@ -415,6 +415,21 @@ std::string EnabledAddonKey(std::string_view name) {
     return fmt::format("+{}", name);
 }
 
+std::vector<std::string> StoredDisabledAddons(u64 title_id, std::vector<std::string> unchecked) {
+    for (const auto& patch : BUILTIN_PATCHES) {
+        if (patch.title_id != title_id || !patch.off_by_default) {
+            continue;
+        }
+        const auto it = std::find(unchecked.begin(), unchecked.end(), patch.name);
+        if (it != unchecked.end()) {
+            unchecked.erase(it);
+        } else {
+            unchecked.push_back(EnabledAddonKey(patch.name));
+        }
+    }
+    return unchecked;
+}
+
 namespace {
 
 enum class TitleVersionFormat : u8 {
