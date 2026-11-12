@@ -1581,7 +1581,7 @@ private:
     std::condition_variable_any m_reserve_cv; ///< Wakes FillReserve
     std::vector<MappedBacking> m_reserve; ///< Mapped and cleared memory for sparse blocks
     bool m_reserve_wanted{};    ///< A lazily backed region was created
-    bool m_reserve_exhausted{}; ///< The last fill found no memory; again once backing is freed
+    bool m_reserve_exhausted{}; ///< The last fill found no memory; again once backing is freed or a block defers
     std::deque<std::pair<u64, u64>> m_deferred_blocks; ///< BlockDeferred (region, block), oldest first
     u64 m_deferred_count{};     ///< Blocks that had to wait for memory
     std::stop_source m_reserve_stop;
