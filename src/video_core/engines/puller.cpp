@@ -516,7 +516,6 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
             // channel waits for it suspended, not in a drain, and the front parses the others
             // meanwhile (as in jpkto's 188baa1448, #1161). Registered before the second look, so a
             // release that lands in between counts.
-            VideoCommon::Count(stats.suspended);
             auto& waiters = Nx2SemaphoreWaiters::Get();
             AddWaiter(dma_pusher, acquire, this);
             const u32 guest = dma_pusher.memory_manager.Read<u32>(acquire.address);
@@ -527,6 +526,7 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
                 waiters.Remove(this);
                 return;
             }
+            VideoCommon::Count(stats.trigger_not_met_twice);
             acquire.sent_at = VideoCommon::GpuSplit::Get().Position();
             acquire.writers_before = VideoCommon::GpuSplit::Get().LastWriterPosition();
             pending_acquire = acquire;
