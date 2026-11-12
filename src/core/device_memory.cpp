@@ -10,6 +10,7 @@
 #include <new>
 
 #include "common/logging.h"
+#include "common/memory_detect.h"
 #include "common/thread.h"
 #endif
 

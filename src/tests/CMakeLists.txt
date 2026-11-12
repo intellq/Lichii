@@ -15,12 +15,14 @@ add_executable(tests
     video_core/frame_dump_schedule.cpp
     video_core/nx2_stutter_trace.cpp
     video_core/back_idle_trace.cpp
+    video_core/list_macro_trace.cpp
     video_core/host_mip_limits.cpp
     video_core/gpu_timestamp.cpp
     video_core/semaphore_waiters.cpp
     video_core/hdr_output.cpp
     core/nx2_streamplay.cpp
     core/nx2_video_ready.cpp
+    core/nx2_thread_stats.cpp
     core/nx2_debug_server.cpp
     core/nx2_present_pacer.cpp
     core/ldn_lan_protocol.cpp
@@ -171,6 +173,7 @@ add_executable(tests
     common/host_memory_test_access.h
     common/memory_detect.cpp
     core/host_memory_failure.cpp
+    common/memory_detect.cpp
     common/multi_level_page_table.cpp
     common/nextendo.cpp
     common/page_table.cpp

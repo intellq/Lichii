@@ -51,6 +51,7 @@
 #include "core/hle/kernel/k_client_session.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/kernel.h"
+#include "core/hle/kernel/nx2_thread_stats.h"
 #include "core/hle/kernel/k_system_resource.h"
 #include "core/hle/kernel/k_memory_manager.h"
 #include "core/hle/kernel/k_system_control.h"
@@ -1992,6 +1993,8 @@ public:
         for (auto* event : m_events) {
             m_context.CloseEvent(event);
         }
+        // The interval belonged to this session's presents (PaceToVblank).
+        Tegra::g_nx2_guest_frame_interval_ns.store(0, std::memory_order_relaxed);
     }
 
 private:
@@ -2005,6 +2008,9 @@ private:
     void PresentClientBuffer(HLERequestContext& ctx) {
         const auto* w = ctx.CommandBuffer();
         ++m_presents;
+        if (Kernel::Nx2ThreadStats::g_enabled) {
+            Kernel::Nx2ThreadStats::OnPresent(&ctx.GetThread());
+        }
         if (Common::DkbFrameTrace::Enabled()) {
             m_vsync->trace_present.store(m_presents, std::memory_order_relaxed);
         }
@@ -2441,6 +2447,7 @@ private:
             SetVsyncInterval(DefaultVblankInterval());
         }
         if (!high_refresh && !speed_limited && fps_limit == 0) {
+            Tegra::g_nx2_guest_frame_interval_ns.store(0, std::memory_order_relaxed);
             return;
         }
         if (timing != std::exchange(m_swap_word, timing)) {
@@ -2454,6 +2461,10 @@ private:
                                                    refresh_rate /
                                                    (speed_limited ? Settings::SpeedLimit() : 100)};
         const auto interval = high_refresh ? OotHighRefreshInterval() : PacedInterval(vblank_interval, fps_limit);
+        Tegra::g_nx2_guest_frame_interval_ns.store(
+            static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(interval).count()),
+            std::memory_order_relaxed);
         if (trace) {
             m_frame_trace.target_ms = std::chrono::duration<double, std::milli>(interval).count();
         }

@@ -278,36 +278,47 @@ void nvhost_as_gpu::Nx2Unmap(u64 gpu_address, u64 size) {
 }
 
 void nvhost_as_gpu::Nx2Release(u64 cpu_address, u64 size) {
-    Nx2DeviceRange range{};
+    struct Released {
+        u64 cpu;
+        u64 size;
+        Nx2DeviceRange range;
+    };
+    std::vector<Released> released;
     {
         std::scoped_lock lock(mutex);
-        const auto it = nx2_device_ranges.find({cpu_address, size});
-        if (it == nx2_device_ranges.end()) {
-            return;
-        }
-        range = it->second;
-        nx2_device_ranges.erase(it);
-        if (range.shared &&
-            !Nx2GpuMemoryRegistry::Get().ReleaseDeviceRange(range.asid, cpu_address, size)) {
-            return; // another address space of the process still maps it
-        }
+        // Every range inside the released span, not only one that matches it exactly.
+        Nx2EraseContainedRanges(nx2_device_ranges, cpu_address, size,
+                                [&](u64 range_cpu, u64 range_size, const Nx2DeviceRange& range) {
+                                    if (range.shared &&
+                                        !Nx2GpuMemoryRegistry::Get().ReleaseDeviceRange(
+                                            range.asid, range_cpu, range_size)) {
+                                        return; // another address space of the process still maps it
+                                    }
+                                    released.push_back({range_cpu, range_size, range});
+                                });
+    }
+    if (released.empty()) {
+        return;
     }
     auto* session = container.GetSession(nx2_session);
-    auto* const mapper = range.heap && session != nullptr ? session->mapper.get() : nullptr;
     auto& smmu = system.Host1x().MemoryManager();
-    // Queued after the GPU unmaps of the range, so the GPU thread is done with it. Outside
-    // `mutex`, as Nx2Map's GPU-thread work.
-    system.GPU().RunInOrder([&smmu, mapper, range, cpu_address, size] {
-        if (range.heap) {
-            if (mapper != nullptr) {
-                mapper->Unmap(cpu_address, size);
+    for (const Released& item : released) {
+        auto* const mapper =
+            item.range.heap && session != nullptr ? session->mapper.get() : nullptr;
+        // Queued after the GPU unmaps of the range, so the GPU thread is done with it. Outside
+        // `mutex`, as Nx2Map's GPU-thread work.
+        system.GPU().RunInOrder([&smmu, mapper, item] {
+            if (item.range.heap) {
+                if (mapper != nullptr) {
+                    mapper->Unmap(item.cpu, item.size);
+                }
+                return;
             }
-            return;
-        }
-        smmu.Unmap(range.address, size);
-        smmu.Free(range.address, Common::AlignUp(size, 0x20000));
-    });
-    LOG_DEBUG(Service_NVDRV, "Switch 2 released backing {:#x}+{:#x}", cpu_address, size);
+            smmu.Unmap(item.range.address, item.size);
+            smmu.Free(item.range.address, Common::AlignUp(item.size, 0x20000));
+        });
+        LOG_DEBUG(Service_NVDRV, "Switch 2 released backing {:#x}+{:#x}", item.cpu, item.size);
+    }
 }
 
 void nvhost_as_gpu::Nx2Sparse(u64 gpu_address, u64 size, bool create) {

@@ -261,6 +261,9 @@ private:
     }
 
     CodePtr GetCurrentBlock() {
+        if (conf.counters) {
+            ++conf.counters->block_lookups;
+        }
         return GetBlock(GetCurrentLocation());
     }
 
@@ -307,6 +310,9 @@ private:
             return nullptr;
         }
         Optimization::Optimize(ir_block, conf, polyfill_options);
+        if (conf.counters) {
+            ++conf.counters->blocks_compiled;
+        }
         return emitter.Emit(ir_block).entrypoint;
     }
 
@@ -322,6 +328,9 @@ private:
 
             jit_state.ResetRSB();
             if (invalidate_entire_cache) {
+                if (conf.counters) {
+                    ++conf.counters->cache_clears;
+                }
                 block_of_code.ClearCache();
                 emitter.ClearCache();
             } else {
