@@ -31,6 +31,10 @@ struct HostRam {
 
 [[nodiscard]] HostRam GetHostRam();
 
+/// The sum of the MEMORY_DEVICE_<n>_SIZE entries in udev's data for the DMI device
+/// (/run/udev/data/+dmi:id), or 0 without any.
+[[nodiscard]] u64 InstalledRamFromUdev(std::string_view data);
+
 /// Whether the host has less than the 16 GiB of RAM Switch 2 titles need. Memory the OS manages
 /// passes from 12 GiB, so a 16 GiB machine that reserves up to 4 GiB for its GPU still passes.
 [[nodiscard]] bool IsBelowSwitch2RamMinimum(HostRam ram);
