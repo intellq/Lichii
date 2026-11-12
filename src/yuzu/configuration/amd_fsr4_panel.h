@@ -26,6 +26,6 @@ private:
 
     QLabel* icon_label;
     QLabel* status_label;
-    QPushButton* download_button;
-    QPushButton* folder_button;
+    QPushButton* download_button{};
+    QPushButton* folder_button{};
 };

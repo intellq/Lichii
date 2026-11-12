@@ -101,12 +101,6 @@ AmdFsr4Panel::AmdFsr4Panel(QWidget* parent) : QWidget(parent) {
     status_label->setTextFormat(Qt::RichText);
     status_label->setWordWrap(true);
     status_row->addWidget(icon_label);
-    status_row->addWidget(status_label, 1);
-
-    QHBoxLayout* button_row = new QHBoxLayout;
-    button_row->setContentsMargins(24, 0, 0, 0);
-    download_button = new QPushButton(this);
-    folder_button = new QPushButton(Tr("Open Folder"), this);
 #if defined(__linux__)
     QLabel* about =
         new QLabel(QStringLiteral("<a href=\"https://github.com/Astyyyyy/fsr4-vk\">%1</a>")
@@ -115,8 +109,21 @@ AmdFsr4Panel::AmdFsr4Panel(QWidget* parent) : QWidget(parent) {
     about->setOpenExternalLinks(true);
     about->setToolTip(Tr("fsr4-vk on GitHub (GPL-3.0). Its licence and AMD's notice ship in the "
                          "package's share/licenses/fsr4-vk folder."));
-    download_button->setVisible(false);
+    QVBoxLayout* text_column = new QVBoxLayout;
+    text_column->setSpacing(4);
+    text_column->addWidget(status_label);
+    text_column->addWidget(about);
+    status_row->addLayout(text_column, 1);
+    layout->addLayout(status_row);
+    Refresh();
+}
 #else
+    status_row->addWidget(status_label, 1);
+
+    QHBoxLayout* button_row = new QHBoxLayout;
+    button_row->setContentsMargins(24, 0, 0, 0);
+    download_button = new QPushButton(this);
+    folder_button = new QPushButton(Tr("Open Folder"), this);
     QLabel* about = new QLabel(
         QStringLiteral("<a href=\"%1\">%2</a>")
             .arg(QString::fromUtf8(FfxRuntime::RELEASE_PAGE.data(),
@@ -126,7 +133,6 @@ AmdFsr4Panel::AmdFsr4Panel(QWidget* parent) : QWidget(parent) {
     about->setOpenExternalLinks(true);
     about->setToolTip(Tr("AMD's FidelityFX SDK release on GitHub. The files are in "
                          "Kits\\FidelityFX\\signedbin."));
-#endif
     button_row->addWidget(download_button);
     button_row->addWidget(folder_button);
     button_row->addStretch(1);
@@ -144,6 +150,7 @@ AmdFsr4Panel::AmdFsr4Panel(QWidget* parent) : QWidget(parent) {
     });
     Refresh();
 }
+#endif
 
 void AmdFsr4Panel::showEvent(QShowEvent* event) {
     Refresh();
