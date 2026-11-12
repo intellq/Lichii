@@ -9,6 +9,8 @@
 
 #ifdef __linux__
 #include <sys/prctl.h>
+#elif defined(_WIN32)
+#include "common/windows/timer_resolution.h"
 #endif
 
 #include "common/assert.h"
@@ -61,7 +63,8 @@ void ThreadManager::StartThread(VideoCore::RendererBase& renderer, Core::Fronten
         Common::SetCurrentThreadName("GPU");
         VideoCommon::GpuSplit::MarkGpuThread();
 #ifdef __linux__
-        // The pending-channel waits below sleep 500 us; the default timer slack adds up to 50 more.
+        // The pending-channel waits below sleep 50 or 500 us; the default timer slack adds up to 50
+        // more.
         prctl(PR_SET_TIMERSLACK, 1UL, 0, 0, 0);
 #endif
         Common::SetCurrentThreadPriority(Common::ThreadPriority::Critical);
@@ -84,6 +87,10 @@ void ThreadManager::StartThread(VideoCore::RendererBase& renderer, Core::Fronten
         // How the last wait ended, counted when a channel moves after it.
         enum class WaitEnd { None, Woken, PollTimedOut, SleepTimedOut };
         WaitEnd last_wait = WaitEnd::None;
+        // gpu_wait_in_hardware off: the earlier wait, a yield loop for 500 us, then 50 us sleeps,
+        // then 1 ms sleeps once a channel has waited 2 s. Ocarina of Time runs 1-2 fps faster
+        // with it.
+        const bool wait_in_hardware = Settings::values.gpu_wait_in_hardware.GetValue();
         auto& wake = Tegra::Nx2PendingWake::Get();
         auto& waiters = Tegra::Nx2SemaphoreWaiters::Get();
         auto& acquire_stats = VideoCommon::g_acquire_stats;
@@ -140,6 +147,22 @@ void ThreadManager::StartThread(VideoCore::RendererBase& renderer, Core::Fronten
                     Profile::Scope scope{Profile::Zone::PendingSleep};
                     split.SettleIdleBack();
                     const auto now = std::chrono::steady_clock::now();
+                    if (!wait_in_hardware) {
+                        const auto waited = now - last_progress;
+                        if (waited < PendingPoll) {
+                            std::this_thread::yield();
+                        } else if (waited < std::chrono::seconds{2}) {
+#ifdef _WIN32
+                            // sleep_for(50us) rounds up to Sleep(1) (>= 1 ms) on Windows.
+                            Common::Windows::SleepForOneTick();
+#else
+                            std::this_thread::sleep_for(std::chrono::microseconds{50});
+#endif
+                        } else {
+                            std::this_thread::sleep_for(std::chrono::milliseconds{1});
+                        }
+                        continue;
+                    }
                     bool woken = false;
                     if (now - last_progress < PendingPoll) {
                         VideoCommon::Count(acquire_stats.front_polls);

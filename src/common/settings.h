@@ -846,6 +846,9 @@ struct Values {
     SwitchableSetting<bool> pin_gpu_threads{linkage, true, "pin_gpu_threads",
                                             Category::RendererHacks};
 
+    SwitchableSetting<bool> gpu_wait_in_hardware{linkage, false, "gpu_wait_in_hardware",
+                                                 Category::RendererHacks};
+
     SwitchableSetting<ExtendedDynamicState> dyna_state{linkage,
 #if defined(__ANDROID__)
                                            ExtendedDynamicState::Disabled,
