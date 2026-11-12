@@ -108,6 +108,14 @@ void ConfigurePerGameAddons::ApplyConfiguration() {
 
     for (const auto& item : list_items) {
         const auto disabled = item.front()->checkState() == Qt::Unchecked;
+        if (item.front()->data(OFF_BY_DEFAULT).toBool()) {
+            // Off by default: stored when turned on instead.
+            if (!disabled) {
+                disabled_addons.push_back(
+                    FileSys::EnabledAddonKey(item.front()->text().toStdString()));
+            }
+            continue;
+        }
         if (disabled) {
             QVariant userData = item.front()->data(Qt::UserRole);
             if (userData.isValid() && userData.canConvert<quint32>() &&
@@ -338,7 +346,12 @@ void ConfigurePerGameAddons::LoadConfiguration() {
         }
 
         bool patch_disabled = false;
-        if (is_external_update) {
+        if (patch.off_by_default) {
+            first_item->setData(true, OFF_BY_DEFAULT);
+            patch_disabled = std::find(disabled.begin(), disabled.end(),
+                                       FileSys::EnabledAddonKey(name.toStdString())) ==
+                             disabled.end();
+        } else if (is_external_update) {
             std::string disabled_key = fmt::format("Update@{}", patch.numeric_version);
             patch_disabled =
                 std::find(disabled.begin(), disabled.end(), disabled_key) != disabled.end();

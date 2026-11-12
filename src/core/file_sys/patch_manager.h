@@ -12,6 +12,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include "common/common_types.h"
 #include "core/file_sys/nca_metadata.h"
 #include "core/file_sys/vfs/vfs_types.h"
@@ -51,7 +52,12 @@ struct Patch {
     PatchSource source;
     std::string location;
     u32 numeric_version{0};
+    // Off until the user turns it on: disabled_addons then holds EnabledAddonKey(name).
+    bool off_by_default{false};
 };
+
+// The disabled_addons entry that turns on an add-on that is off by default.
+[[nodiscard]] std::string EnabledAddonKey(std::string_view name);
 
 // A centralized class to manage patches to games.
 class PatchManager {
