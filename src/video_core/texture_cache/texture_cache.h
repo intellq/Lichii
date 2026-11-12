@@ -1715,11 +1715,21 @@ void TextureCache<P>::WriteMemory(DAddr cpu_addr, size_t size) {
 template <class P>
 boost::container::small_vector<ImageId, 8> TextureCache<P>::NewerGpuOverlaps(
     const ImageBase& image) const {
+    // Writing an overlap back can overwrite the images newer than it that overlap it in turn, so
+    // those follow too, through the whole chain.
     boost::container::small_vector<ImageId, 8> newer;
-    for (const ImageId overlap_id : image.overlapping_images) {
-        const ImageBase& overlap = slot_images[overlap_id];
-        if (overlap.modification_tick > image.modification_tick && IsDownloadable(overlap)) {
+    boost::container::small_vector<const ImageBase*, 8> pending{&image};
+    while (!pending.empty()) {
+        const ImageBase& written = *pending.back();
+        pending.pop_back();
+        for (const ImageId overlap_id : written.overlapping_images) {
+            const ImageBase& overlap = slot_images[overlap_id];
+            if (overlap.modification_tick <= written.modification_tick ||
+                !IsDownloadable(overlap) || std::ranges::find(newer, overlap_id) != newer.end()) {
+                continue;
+            }
             newer.push_back(overlap_id);
+            pending.push_back(&overlap);
         }
     }
     std::ranges::sort(newer, {}, [this](ImageId id) { return slot_images[id].modification_tick; });

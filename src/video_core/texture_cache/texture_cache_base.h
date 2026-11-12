@@ -609,7 +609,7 @@ private:
     /// Refresh the contents (pixel data) of an image
     [[nodiscard]] bool IsDownloadable(const ImageBase& image) const noexcept;
 
-    /// Overlaps of a badly overlapping image that the GPU drew to after it, oldest first.
+    /// Overlaps the GPU drew to after a badly overlapping image, and theirs, oldest first.
     [[nodiscard]] boost::container::small_vector<ImageId, 8> NewerGpuOverlaps(
         const ImageBase& image) const;
 
