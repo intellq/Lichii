@@ -609,6 +609,13 @@ private:
     /// Refresh the contents (pixel data) of an image
     [[nodiscard]] bool IsDownloadable(const ImageBase& image) const noexcept;
 
+    /// Overlaps of a badly overlapping image that the GPU drew to after it, oldest first.
+    [[nodiscard]] boost::container::small_vector<ImageId, 8> NewerGpuOverlaps(
+        const ImageBase& image) const;
+
+    /// Copies a GPU-written image back to guest memory and waits for it.
+    void WriteBackImage(Image& image);
+
     void RefreshContents(Image& image, ImageId image_id);
 
     /// Upload data from guest to an image
