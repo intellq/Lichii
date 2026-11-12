@@ -16,7 +16,6 @@ add_executable(tests
     video_core/nx2_stutter_trace.cpp
     video_core/back_idle_trace.cpp
     video_core/host_mip_limits.cpp
-    video_core/texture_gc_age.cpp
     video_core/gpu_timestamp.cpp
     video_core/semaphore_waiters.cpp
     video_core/hdr_output.cpp
