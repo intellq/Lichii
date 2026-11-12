@@ -154,7 +154,7 @@ u32 DynamicSampledTextureCap(const Info& info, const HostTranslateInfo& host_inf
     auto const resource_limit = (std::max)(1U, host_info.max_per_stage_resources);
     if (dynamic_arrays > 0) {
         auto const sampler_static_count = StaticDescriptorCount(info.texture_descriptors);
-        auto const sampled_static_count = StaticDescriptorCount(info.texture_buffer_descriptors) + sampler_static_count;
+        auto const sampled_static_count = NumDescriptors(info.texture_buffer_descriptors) + sampler_static_count;
         auto const resource_static_count =
             NumDescriptors(info.constant_buffer_descriptors)
             + NumDescriptors(info.storage_buffers_descriptors)
