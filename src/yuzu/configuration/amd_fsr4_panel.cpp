@@ -113,6 +113,16 @@ AmdFsr4Panel::AmdFsr4Panel(QWidget* parent) : QWidget(parent) {
     button_row->setContentsMargins(24, 0, 0, 0);
     download_button = new QPushButton(this);
     folder_button = new QPushButton(Tr("Open Folder"), this);
+#if defined(__linux__)
+    QLabel* about =
+        new QLabel(QStringLiteral("<a href=\"https://github.com/Astyyyyy/fsr4-vk\">%1</a>")
+                       .arg(Tr("About fsr4-vk")),
+                   this);
+    about->setOpenExternalLinks(true);
+    about->setToolTip(Tr("fsr4-vk on GitHub (GPL-3.0). Its licence and AMD's notice ship in the "
+                         "package's share/licenses/fsr4-vk folder."));
+    download_button->setVisible(false);
+#else
     QLabel* about = new QLabel(
         QStringLiteral("<a href=\"%1\">%2</a>")
             .arg(QString::fromUtf8(FfxRuntime::RELEASE_PAGE.data(),
@@ -122,6 +132,7 @@ AmdFsr4Panel::AmdFsr4Panel(QWidget* parent) : QWidget(parent) {
     about->setOpenExternalLinks(true);
     about->setToolTip(Tr("AMD's FidelityFX SDK release on GitHub. The files are in "
                          "Kits\\FidelityFX\\signedbin."));
+#endif
     button_row->addWidget(download_button);
     button_row->addWidget(folder_button);
     button_row->addStretch(1);
@@ -155,7 +166,7 @@ void AmdFsr4Panel::Refresh() {
     status_label->setText(
         ready ? Tr("Community port of FSR 4 for Vulkan. It runs if the GPU and driver support "
                    "it; otherwise FSR 3.1 does.")
-              : Tr("<b>Not in this build:</b> Lichii's Linux packages include fsr4-vk. For a "
+              : Tr("<b>Not in this build:</b> Lichii's x86-64 Linux packages include fsr4-vk. For a "
                    "build without it, put %1 from fsr4-vk in the folder. Until then, FSR 3.1 is "
                    "used.")
                     .arg(QString::fromUtf8(

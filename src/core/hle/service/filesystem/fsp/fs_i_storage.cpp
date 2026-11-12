@@ -11,6 +11,8 @@
 
 #include "common/settings.h"
 #include "common/nx2_hitch.h"
+#include "core/core.h"
+#include "core/file_sys/common_funcs.h"
 #include "core/file_sys/errors.h"
 #include "core/hle/service/cmif_serialization.h"
 #include "core/hle/service/filesystem/fsp/fs_i_storage.h"
@@ -20,6 +22,19 @@ namespace Service::FileSystem {
 
 IStorage::IStorage(Core::System& system_, FileSys::VirtualFile backend_)
     : ServiceFramework{system_, "IStorage"}, backend(std::move(backend_)) {
+    // The 40 MB/s throttle emulates a Switch 1 card (Eden cbd4cf2d8c, Mario Strikers' intro).
+    // Switch 2 storage is many times faster, and a Switch 2 title that streams a movie with
+    // hundreds of reads a second (Ocarina of Time's opening: 300-460) sleeps most of each second
+    // on the thread that also hands decoder images back, so its video falls seconds behind.
+    // Hyrule Warriors: Age of Imprisonment does not survive reads that complete with no delay at
+    // all: from ~8 s into boot it follows null and wild pointers and never leaves its first
+    // loading screen. It boots at 100 and 200 MB/s, not at 300 or 400 (upstream 45d1fdbdf4).
+    if (!Settings::CurrentProgramIsSwitch2()) {
+        bytes_per_second = ReadBytesPerSecond;
+    } else if (FileSys::GetBaseTitleID(system.GetApplicationProcessProgramID()) ==
+               AgeOfImprisonmentProgramId) {
+        bytes_per_second = AgeOfImprisonmentReadBytesPerSecond;
+    }
     static const FunctionInfo functions[] = {
         {0, D<&IStorage::Read>, "Read"},
         {1, nullptr, "Write"},
@@ -39,13 +54,13 @@ Result IStorage::Read(
     R_UNLESS(length >= 0, FileSys::ResultInvalidSize);
     R_UNLESS(offset >= 0, FileSys::ResultInvalidOffset);
 
-    // Switch 2 does not use the Switch 1 card's 40 MB/s pacing. The optional override also
-    // disables pacing for Switch 1 when explicitly requested.
+    // The pace the constructor chose (none for most Switch 2 titles). EDEN_NX2_READ_THROTTLE=0
+    // turns it off.
     static const bool throttle_enabled = [] {
         const char* const value = std::getenv("EDEN_NX2_READ_THROTTLE");
         return value == nullptr || value[0] != '0';
     }();
-    if (throttle_enabled && !Settings::CurrentProgramIsSwitch2()) {
+    if (throttle_enabled && bytes_per_second > 0) {
         const auto now = std::chrono::steady_clock::now();
         if (now < next_read_tick) {
             const Common::Nx2Hitch::Scope timed{Common::Nx2Hitch::Cause::FileThrottle};
@@ -53,7 +68,7 @@ Result IStorage::Read(
         }
         next_read_tick = std::chrono::steady_clock::now() +
                          std::chrono::nanoseconds{std::min(length, MaxChargedReadSize) *
-                                                  1'000'000'000 / ReadBytesPerSecond};
+                                                  1'000'000'000 / bytes_per_second};
     }
 
     // Read the data from the Storage backend

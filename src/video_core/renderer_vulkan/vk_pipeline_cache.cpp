@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -19,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <random>
 #include <span>
@@ -26,17 +28,17 @@
 #include <tuple>
 #include <unordered_set>
 #include <vector>
-#include <bit>
-#include <numeric>
 #include "common/cityhash.h"
 #include "common/scm_rev.h"
 #include "common/scope_exit.h"
+#include "common/fs/file_lock.h"
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
 #include "common/memory_detect.h"
-#include "common/zstd_compression.h"
+#include "common/scope_exit.h"
 #include "common/thread.h"
 #include "common/thread_worker.h"
+#include "common/zstd_compression.h"
 #include "core/core.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/environment.h"
@@ -48,6 +50,7 @@
 #include "shader_recompiler/program_header.h"
 #include "video_core/engines/kepler_compute.h"
 #include "video_core/engines/maxwell_3d.h"
+#include "video_core/gpu_logging/gpu_logging.h"
 #include "video_core/memory_manager.h"
 #include "video_core/nx2_perf.h"
 #include "video_core/nx2_profile.h"
@@ -58,8 +61,8 @@
 #include "shader_recompiler/info_serialize.h"
 #include "common/zstd_compression.h"
 #include "video_core/renderer_vulkan/fixed_pipeline_state.h"
-#include "video_core/renderer_vulkan/mesh_fallback_limits.h"
 #include "video_core/renderer_vulkan/maxwell_to_vk.h"
+#include "video_core/renderer_vulkan/mesh_fallback_limits.h"
 #include "video_core/renderer_vulkan/pipeline_eviction_policy.h"
 #include "video_core/renderer_vulkan/pipeline_helper.h"
 #include "video_core/renderer_vulkan/pipeline_shader_emission.h"
@@ -79,13 +82,13 @@
 #include "video_core/shader_cache.h"
 #include "video_core/shader_cache_v2/cache_file.h"
 #include "video_core/shader_cache_v2/records.h"
+#include "video_core/nx2_fast_draw.h"
 #include "video_core/shader_environment.h"
 #include "video_core/shader_notify.h"
 #include "video_core/shader_warm/shader_warm_builder.h"
 #include "video_core/surface.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
-#include "video_core/gpu_logging/gpu_logging.h"
 
 #ifdef __ANDROID__
 #include "../../android/app/src/main/jni/android_settings.h"
@@ -931,6 +934,8 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
         Settings::values.vertex_input_dynamic_state.GetValue();
     dynamic_features.has_static_vertex_repack =
         StaticVertexRepackEnabled(device.GetMinVertexInputBindingStrideAlignment());
+    VideoCommon::Nx2FastDraw::g_dynamic_vertex_input.store(
+        dynamic_features.has_dynamic_vertex_input, std::memory_order_relaxed);
 
     dynamic_features.has_provoking_vertex = device.IsExtProvokingVertexSupported();
     dynamic_features.has_provoking_vertex_first_mode =
@@ -1282,6 +1287,23 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     // One record log, under its plain name (ShaderCacheV2::NormalizeShaderFiles renamed this
     // translator's log to it): records lowered by another translator are lowered again.
     pipeline_cache_filename = base_dir / CacheV2::FileName;
+    // Left by a boot load that never finished (a driver crash, abort or hang): this boot builds
+    // nothing from the cache. The lock is held for as long as the marker may be there, so while
+    // another emulator holds it, its load is running (or its crash dump is being written).
+    auto boot_marker = pipeline_cache_filename;
+    boot_marker += ".booting";
+    auto boot_lock_path = boot_marker;
+    boot_lock_path += ".lock";
+    const Common::FS::FileLock boot_lock{boot_lock_path};
+    const bool build_at_boot =
+        boot_lock.Held() ? !Common::FS::Exists(boot_marker) : !boot_lock.Busy();
+    if (boot_lock.Busy()) {
+        LOG_WARNING(Render_Vulkan, "Shader cache v2: another emulator is loading this title's "
+                                   "cache; building none at boot this time");
+    } else if (!build_at_boot) {
+        LOG_WARNING(Render_Vulkan, "Shader cache v2: the last boot ended while building cached "
+                                   "pipelines; building none at boot this time");
+    }
     const auto migration =
         MigrateLegacyPipelineCache(base_dir, pipeline_cache_filename, MaxUsedPipelineAge(device));
     if (migration.version) {
@@ -1294,6 +1316,9 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         LOG_WARNING(Render_Vulkan, "Couldn't start shader cache v2 from the older cache");
     }
     cache_v2 = std::make_unique<CacheV2::Cache>(pipeline_cache_filename);
+    if (!build_at_boot) {
+        cache_v2->KeepStalePrograms();
+    }
     shader_cache_v2 = cache_v2.get();
     pipeline_binaries = PipelineBinaries::Open(device, base_dir);
     // Without the lock: another emulator's appends are complete records or a cut-off tail.
@@ -1325,8 +1350,10 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     // With the shader precache this boot, the cached graphics pipelines skipped below are built
     // on the loading screen too, unless an earlier precache built them for this driver.
     namespace ShaderWarm = VideoCommon::ShaderWarm;
-    const bool precache = ShaderWarm::PrecacheBeforeStart(
-        Settings::values.precache_shaders.GetValue(), ShaderWarm::TakeWarmBeforeStart());
+    const bool precache =
+        ShaderWarm::PrecacheBeforeStart(Settings::values.precache_shaders.GetValue(),
+                                        ShaderWarm::TakeWarmBeforeStart()) &&
+        build_at_boot;
     std::unordered_set<u64> precached_pipelines;
     if (precache) {
         precached_pipelines = ShaderWarm::ReadPrecachedPipelines(
@@ -1346,8 +1373,15 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         vulkan_pipeline_cache =
             LoadVulkanPipelineCache(vulkan_pipeline_cache_filename, CACHE_VERSION);
     }
+    if (boot_lock.Held() && !Common::FS::NewFile(boot_marker)) {
+        LOG_WARNING(Common_Filesystem, "Couldn't create {}",
+                    Common::FS::PathToUTF8String(boot_marker));
+    }
     LoadPipelinesV2(title_id, std::move(log_v2), stop_loading, callback, load_begin, precache,
-                    std::move(precached_pipelines));
+                    std::move(precached_pipelines), build_at_boot);
+    if (boot_lock.Held()) {
+        Common::FS::RemoveFile(boot_marker);
+    }
 }
 
 bool PipelineCache::KeyFitsDevice(const GraphicsPipelineCacheKey& key) const {
@@ -1404,6 +1438,11 @@ void PipelineCache::StopBackgroundJobs() {
     scheduled_prebuild.reset();
 }
 
+// Set while this thread translates a cached graphics record: CreateGraphicsPipeline drops one
+// that binds a pointer word its capture saw unmapped (Shader::Info::binds_unmapped_pointer_word)
+// before it constructs the pipeline, and sets the flag
+static thread_local bool* t_dropped_unmapped_pointer_word{};
+
 std::unique_ptr<GraphicsPipeline> PipelineCache::TranslateCachedGraphics(
     std::span<const u8> payload, const GraphicsPipelineCacheKey& key,
     PipelineStatistics* statistics, bool& incomplete) {
@@ -1425,7 +1464,21 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::TranslateCachedGraphics(
     for (auto& env : envs) {
         env_ptrs.push_back(&env);
     }
+    bool dropped{};
+    t_dropped_unmapped_pointer_word = &dropped;
+    SCOPE_EXIT {
+        t_dropped_unmapped_pointer_word = nullptr;
+    };
     auto pipeline{CreateGraphicsPipeline(pools, key, MakeSpan(env_ptrs), statistics, false)};
+    if (dropped) {
+        // The record froze a storage pointer the capture saw null (graphics translations aren't
+        // rebuilt when it fills, compute ones are): captured again when the game draws it.
+        LOG_INFO(Render_Vulkan,
+                 "Pipeline record {:016x} binds a pointer as a texture handle; capturing it again",
+                 key.Hash());
+        incomplete = true;
+        return nullptr;
+    }
     incomplete = !pipeline && std::ranges::any_of(envs, [this](const FileEnvironment& env) {
         return env.LacksRecordedValue(host_info.EnvironmentReadProperties());
     });
@@ -1436,8 +1489,9 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
                                     std::shared_ptr<const VideoCommon::ShaderCacheV2::LogFile> log,
                                     std::stop_token stop_loading,
                                     const VideoCore::DiskResourceLoadCallback& callback,
-                                    std::chrono::steady_clock::time_point load_begin,
-                                    bool precache, std::unordered_set<u64> precached_pipelines) {
+                                    std::chrono::steady_clock::time_point load_begin, bool precache,
+                                    std::unordered_set<u64> precached_pipelines,
+                                    bool build_at_boot) {
     namespace CacheV2 = VideoCommon::ShaderCacheV2;
     namespace StutterTrace = VideoCommon::StutterTrace;
     using CacheV2::RecordKind;
@@ -1524,7 +1578,7 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
     std::vector<CacheV2::LogAppend> relinked_appends;
     std::vector<CacheV2::LogRecord> relinked_records;
     std::unordered_set<u64> replaced_records;
-    if (!stale_programs.empty() && !stop_loading.stop_requested()) {
+    if (build_at_boot && !stale_programs.empty() && !stop_loading.stop_requested()) {
         const size_t stale_count = stale_programs.size();
         CacheV2::ForEach for_each = [&jobs](size_t count, const std::function<void(size_t)>& task) {
             VideoCommon::ParallelFor(jobs, count, task);
@@ -1640,6 +1694,9 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
                 unreadable(record, "Compute pipeline record without a key");
                 continue;
             }
+            if (!build_at_boot) {
+                continue;
+            }
             compute_keys[*key].push_back(records.size());
             records.push_back(&record);
             continue;
@@ -1664,6 +1721,10 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
         }
         const u64 hash = key->Hash();
         if (!disk_pipelines.insert(hash).second) {
+            continue;
+        }
+        if (!build_at_boot) {
+            ++skipped_pipelines;
             continue;
         }
         const bool used = used_pipelines.empty()
@@ -3355,7 +3416,8 @@ GraphicsPipeline* PipelineCache::ReplaceFailedPrecompiled() {
 }
 
 void PipelineCache::QueueVulkanPipelineCacheFlush() {
-    if (!use_vulkan_pipeline_cache || vulkan_pipeline_cache_filename.empty()) {
+    if (!use_vulkan_pipeline_cache || vulkan_pipeline_cache_filename.empty() ||
+        !device.CanReadPipelineCacheDuringBuilds()) {
         return;
     }
     if (++pipelines_since_flush < VULKAN_CACHE_FLUSH_PIPELINES) {
@@ -3384,7 +3446,8 @@ void PipelineCache::QueueVulkanPipelineCacheFlush() {
 }
 
 void PipelineCache::QueueVulkanPipelineCacheSave() {
-    if (!use_vulkan_pipeline_cache || vulkan_pipeline_cache_filename.empty()) {
+    if (!use_vulkan_pipeline_cache || vulkan_pipeline_cache_filename.empty() ||
+        !device.CanReadPipelineCacheDuringBuilds()) {
         return;
     }
     // Not skipped when a timed flush is in flight: that one may have read the cache before the
@@ -4178,6 +4241,11 @@ bool PipelineCache::TranslateGraphicsStages(ShaderPools& pools, const GraphicsPi
 
         Shader::IR::Program& program{programs[index]};
         const size_t stage_index{index - 1};
+        if (t_dropped_unmapped_pointer_word != nullptr &&
+            program.info.binds_unmapped_pointer_word) {
+            *t_dropped_unmapped_pointer_word = true;
+            return false;
+        }
 
         auto runtime_info{MakeRuntimeInfo(programs, key, program, previous_stage, device)};
         if (mesh_emulation && (program.stage == Shader::Stage::Mesh ||

@@ -125,6 +125,8 @@ private:
     std::atomic<u64> m_oot_high_refresh_scale_address{};
     std::atomic<u64> m_oot_main_code_address{};
     std::mutex m_oot_high_refresh_mutex;
+    std::atomic<u64> m_frame_interval_address{};
+    std::atomic<u64> m_frame_interval_source_address{};
     std::atomic<s64> m_num_process_switches{};
     std::atomic<s64> m_num_thread_switches{};
     std::atomic<s64> m_num_fpu_switches{};
@@ -232,6 +234,21 @@ public:
         }
         GetMemory().Write32(address, bits);
         return true;
+    }
+
+    /// Hyrule Warriors' frame interval global (see nx2_frame_interval.h), or 0 when not found.
+    u64 GetFrameIntervalAddress() const {
+        return m_frame_interval_address.load(std::memory_order_relaxed);
+    }
+
+    /// The global the game copies into the frame interval every few frames.
+    u64 GetFrameIntervalSourceAddress() const {
+        return m_frame_interval_source_address.load(std::memory_order_relaxed);
+    }
+
+    void SetFrameIntervalAddresses(u64 interval, u64 source) {
+        m_frame_interval_source_address.store(source, std::memory_order_relaxed);
+        m_frame_interval_address.store(interval, std::memory_order_relaxed);
     }
 
     u64 GetProcessId() const {

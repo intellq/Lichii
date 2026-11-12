@@ -169,7 +169,7 @@ ENUM(ExtendedDynamicState, Disabled, EDS1, EDS2, EDS3);
 ENUM(GpuLogLevel, Off, Errors, Standard, Verbose, All)
 ENUM(GameListMode, TreeView, GridView, CarouselView);
 ENUM(SpeedMode, Standard, Turbo, Slow);
-ENUM(FrameGenType, Lsfg, Fsr3);
+ENUM(FrameGenType, Lsfg, Fsr3, NvidiaDlssG);
 // Size FSR writes Ocarina of Time's scene at (Settings ocarina_fsr_output): 4K, the size
 // the image takes on screen, or the game's 2560x1440 (antialiasing only).
 ENUM(OcarinaFsrOutput, Uhd4k, Screen, AntiAliasing);

@@ -988,3 +988,20 @@ TEST_CASE("Bindless table size uses the same normalized setting for shader prepa
     CHECK(ParseHandleTableSize("-1") == 0);
     CHECK(ParseHandleTableSize("2048") == 1024);
 }
+
+TEST_CASE("A handle word the translation saw dereferenced is not a handle without a storage buffer",
+          "[video_core][texture_handles]") {
+    const Shader::Info info;
+    Shader::TextureDescriptor desc{};
+    desc.cbuf_index = 0;
+    desc.cbuf_offset = 0x520;
+    desc.count = 1;
+    desc.size_shift = 3;
+    CHECK_FALSE(VideoCommon::HandleIsStoragePointer(info, desc, 0));
+    desc.handle_is_pointer_word = true;
+    CHECK(VideoCommon::HandleIsStoragePointer(info, desc, 0));
+    desc.has_secondary = true; // an address built from two words
+    CHECK(VideoCommon::HandleIsStoragePointer(info, desc, 0));
+    desc.handle_program = 0;
+    CHECK_FALSE(VideoCommon::HandleIsStoragePointer(info, desc, 0));
+}
