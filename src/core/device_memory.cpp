@@ -41,7 +41,9 @@ DeviceMemory::~DeviceMemory() = default;
 #ifdef _WIN32
 // Windows can't punch holes in the guest memory section, so pages holding only zeros (games clear
 // their heaps while booting: Ocarina leaves ~7 GB) stay resident until they leave the working set.
-// A pass comes every 5 s while they keep turning up, backing off when little is trimmed.
+// A pass comes every 5 s while they keep turning up, backing off to once every 5 minutes: after
+// boot most passes trim 1-2 MiB for about a second of work. It waits out bulk mapping (loads,
+// spawns), whose map calls stalled 10-14 ms while a pass ran.
 void DeviceMemory::TrimZeroPages(std::stop_token stop) {
     using namespace std::chrono_literals;
     Common::SetCurrentThreadName("ZeroTrim");

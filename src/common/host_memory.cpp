@@ -1055,6 +1055,10 @@ void HostMemory::Swap(HostMemory& other) noexcept {
     std::swap(fallback_buffer, other.fallback_buffer);
 }
 
+namespace {
+std::atomic<u64> g_mapped_bytes{};
+} // namespace
+
 void HostMemory::Map(size_t virtual_offset, size_t host_offset, size_t length, MemoryPermission perms, bool separate_heap) {
     const Nx2Hitch::Scope timed{Nx2Hitch::Cause::HostMap, length};
 #ifdef _WIN32
@@ -1069,6 +1073,7 @@ void HostMemory::Map(size_t virtual_offset, size_t host_offset, size_t length, M
     if (length == 0 || !virtual_base || !impl) {
         return;
     }
+    g_mapped_bytes.fetch_add(length, std::memory_order_relaxed);
     impl->Map(virtual_offset + virtual_base_offset, host_offset, length, perms);
 #endif
 }
@@ -1085,6 +1090,7 @@ void HostMemory::Unmap(size_t virtual_offset, size_t length, bool separate_heap)
     if (length == 0 || !virtual_base || !impl) {
         return;
     }
+    g_mapped_bytes.fetch_add(length, std::memory_order_relaxed);
     impl->Unmap(virtual_offset + virtual_base_offset, length);
 #endif
 }
@@ -1104,6 +1110,7 @@ void HostMemory::Protect(size_t virtual_offset, size_t length, MemoryPermission 
     const bool read = True(perm & MemoryPermission::Read);
     const bool write = True(perm & MemoryPermission::Write);
     const bool execute = True(perm & MemoryPermission::Execute);
+    g_mapped_bytes.fetch_add(length, std::memory_order_relaxed);
     impl->Protect(virtual_offset + virtual_base_offset, length, read, write, execute);
 #endif
 }
@@ -1135,12 +1142,20 @@ namespace {
 std::atomic<u64> g_zero_filled_bytes{};
 
 [[maybe_unused]] bool IsZeroPage(const u8* page) {
+    // Stops at the first non-zero line. Read whole, the ~6 GB of resident guest pages took
+    // 1.35-1.47 s a pass, and most pages hold data in their first bytes.
     const auto* words = reinterpret_cast<const u64*>(page);
-    u64 bits = 0;
-    for (size_t i = 0; i < PageAlignment / sizeof(u64); ++i) {
-        bits |= words[i];
+    constexpr size_t LineWords = 8; // 64 bytes
+    for (size_t i = 0; i < PageAlignment / sizeof(u64); i += LineWords) {
+        u64 bits = 0;
+        for (size_t j = 0; j < LineWords; ++j) {
+            bits |= words[i + j];
+        }
+        if (bits != 0) {
+            return false;
+        }
     }
-    return bits == 0;
+    return true;
 }
 } // namespace
 
@@ -1159,6 +1174,10 @@ HostMemory::ZeroTrimPhases g_zero_trim_phases{};
 
 HostMemory::ZeroTrimPhases HostMemory::LastZeroTrimPhases() noexcept {
     return g_zero_trim_phases; // written and read by the ZeroTrim thread only
+}
+
+u64 HostMemory::MappedBytes() noexcept {
+    return g_mapped_bytes.load(std::memory_order_relaxed);
 }
 
 std::pair<size_t, size_t> HostMemory::TrimZeroPages() const {

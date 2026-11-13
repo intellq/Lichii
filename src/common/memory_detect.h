@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <optional>
 #include <string_view>
 
@@ -72,5 +73,16 @@ struct HeapTrimResult {
 /// It locks one arena at a time, so a thread that allocates from the arena being walked waits
 /// for that slice: call it off the GPU thread. Does nothing elsewhere.
 HeapTrimResult TrimHeap(std::string_view reason);
+
+/// Physical memory the host can hand out now without paging anything out (0 when unknown).
+[[nodiscard]] u64 GetAvailablePhysicalMemory();
+
+/// Whether the host is short of RAM: less than a quarter of it, and less than 4 GiB, free.
+[[nodiscard]] constexpr bool IsLowOnMemory(u64 available, u64 total) {
+    return available != 0 && available < (std::min<u64>)(total / 4, u64{4} << 30);
+}
+
+/// IsLowOnMemory for this host, read again at most once a second.
+[[nodiscard]] bool IsHostLowOnMemory();
 
 } // namespace Common
