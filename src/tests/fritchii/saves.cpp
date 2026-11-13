@@ -10,7 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 // Exercise the same save and backup helpers used by the dialog.
-#include "yuzu/fritchii/saves_window.cpp"
+#include "lichii/fritchii/saves_window.cpp"
 
 namespace {
 namespace fs = std::filesystem;
