@@ -15,7 +15,6 @@ add_executable(tests
     video_core/nx2_stutter_trace.cpp
     video_core/back_idle_trace.cpp
     video_core/list_macro_trace.cpp
-    video_core/nx2_list_grid.cpp
     video_core/host_mip_limits.cpp
     video_core/gpu_timestamp.cpp
     video_core/semaphore_waiters.cpp
@@ -112,6 +111,7 @@ add_executable(tests
     video_core/mesh_raster_topology.cpp
     video_core/multi_range_refresh.cpp
     video_core/command_fetch_order.cpp
+    video_core/gpu_trace.cpp
     video_core/gpu_written_pages.cpp
     video_core/nx2_semaphore_mirror.cpp
     video_core/command_writer.cpp
@@ -175,6 +175,7 @@ add_executable(tests
     common/event.cpp
     common/fibers.cpp
     common/fs_iterate.cpp
+    frontend_common/install_keys.cpp
     common/game_presets.cpp
     common/host_memory.cpp
     common/host_memory_failure.cpp

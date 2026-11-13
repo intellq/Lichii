@@ -140,6 +140,9 @@ jobs:
           python3 tools/nx2/test_thread_worker_wake.py
           python3 -I tools/nx2/thread_worker_wake.py --cxx g++-13
 
+      - name: Test offline RADV shader checks
+        run: python3 tools/nx2/radv_offline/test_checks.py
+
       - name: Test Linux switch discovery
         run: CXX=g++-13 python3 tools/nx2/test_switches.py
 
@@ -261,6 +264,16 @@ jobs:
             echo "::error::lichii.exe imports nxformat.dll; nxformat must be linked statically"
             exit 1
           fi
+
+      # Antivirus heuristics count an unsigned program without file metadata against it.
+      - name: Check the shipped programs carry a version resource
+        run: |
+          for exe in lichii eden-cli lichii-updater; do
+            if ! "$LLVM_ROOT/bin/llvm-readobj" --coff-resources "build/bin/$exe.exe" | grep -q 'Type: VERSIONINFO'; then
+              echo "::error::$exe.exe has no version resource"
+              exit 1
+            fi
+          done
 
       - name: Run tests
         run: ctest --test-dir build --output-on-failure --no-tests=error --parallel "$NUMBER_OF_PROCESSORS"

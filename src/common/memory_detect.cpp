@@ -106,13 +106,20 @@ HostRam GetHostRam() {
     // counts memory the GPU reserves, e.g. the Steam Deck's 16 GiB, of which Linux manages 11.5.
     if (std::ifstream file{"/run/udev/data/+dmi:id"}) {
         const std::string data{std::istreambuf_iterator<char>{file}, {}};
-        if (const u64 installed = InstalledRamFromUdev(data); installed != 0) {
-            return {installed, true};
-        }
+        return HostRamFromUdev(data, GetMemInfo().TotalPhysicalMemory);
     }
 #endif
     return {GetMemInfo().TotalPhysicalMemory, false};
 #endif
+}
+
+HostRam HostRamFromUdev(std::string_view data, u64 managed) {
+    // Installed RAM is never less than what the OS manages. A smaller total is a partial one:
+    // udev has no size entry for a device whose size the firmware reports as unknown.
+    if (const u64 installed = InstalledRamFromUdev(data); installed != 0 && installed >= managed) {
+        return {installed, true};
+    }
+    return {managed, false};
 }
 
 u64 InstalledRamFromUdev(std::string_view data) {

@@ -308,47 +308,45 @@ void nvhost_as_gpu::Nx2Unmap(u64 gpu_address, u64 size) {
 }
 
 void nvhost_as_gpu::Nx2Release(u64 cpu_address, u64 size) {
-    struct Released {
-        u64 cpu;
-        u64 size;
-        Nx2DeviceRange range;
-    };
-    std::vector<Released> released;
+    std::shared_ptr<NvCore::HeapMapper> owned_mapper{};
+    std::vector<std::pair<std::pair<u64, u64>, Nx2DeviceRange>> released{};
     {
         std::scoped_lock lock(mutex);
-        // Every range inside the released span, not only one that matches it exactly.
+        auto* session = container.GetSession(nx2_session);
+        if (session != nullptr) {
+            // An owner, not a raw pointer: with an asynchronous GPU the session can close (and
+            // drop its mapper) before the queued unmap runs.
+            owned_mapper = session->mapper;
+        }
         Nx2EraseContainedRanges(nx2_device_ranges, cpu_address, size,
-                                [&](u64 range_cpu, u64 range_size, const Nx2DeviceRange& range) {
-                                    if (range.shared &&
-                                        !Nx2GpuMemoryRegistry::Get().ReleaseDeviceRange(
-                                            range.asid, range_cpu, range_size)) {
-                                        return; // another address space of the process still maps it
-                                    }
-                                    released.push_back({range_cpu, range_size, range});
-                                });
+                                [&released](u64 range_cpu, u64 range_size,
+                                            const Nx2DeviceRange& range) {
+            if (range.shared &&
+                !Nx2GpuMemoryRegistry::Get().ReleaseDeviceRange(range.asid, range_cpu,
+                                                                 range_size)) {
+                return; // another address space of the process still maps it
+            }
+            released.emplace_back(std::make_pair(range_cpu, range_size), range);
+        });
     }
-    if (released.empty()) {
-        return;
-    }
-    auto* session = container.GetSession(nx2_session);
+    // Queued after the GPU unmaps of the range, so the GPU thread is done with it. Outside
+    // `mutex`, as Nx2Map's GPU-thread work: the GPU thread reaches back into this address space
+    // (Nx2BackSparse) and would wait for `mutex`.
     auto& smmu = system.Host1x().MemoryManager();
-    for (const Released& item : released) {
-        auto* const mapper =
-            item.range.heap && session != nullptr ? session->mapper.get() : nullptr;
-        // Queued after the GPU unmaps of the range, so the GPU thread is done with it. Outside
-        // `mutex`, as Nx2Map's GPU-thread work.
-        system.GPU().RunInOrder([&smmu, mapper, item] {
-            if (item.range.heap) {
+    for (auto& [cpu_range, range] : released) {
+        const auto [range_cpu, range_size] = cpu_range;
+        system.GPU().RunInOrder([&smmu, mapper = owned_mapper, range, range_cpu, range_size] {
+            if (range.heap) {
                 if (mapper != nullptr) {
-                    mapper->Unmap(item.cpu, item.size);
+                    mapper->Unmap(range_cpu, range_size);
                 }
                 return;
             }
-            smmu.Unmap(item.range.address, item.size);
-            smmu.Free(item.range.address, Common::AlignUp(item.size, 0x20000));
-            Nx2NoteDeviceSpace(0, Common::AlignUp(item.size, 0x20000));
+            smmu.Unmap(range.address, range_size);
+            smmu.Free(range.address, Common::AlignUp(range_size, 0x20000));
+            Nx2NoteDeviceSpace(0, Common::AlignUp(range_size, 0x20000));
         });
-        LOG_DEBUG(Service_NVDRV, "Switch 2 released backing {:#x}+{:#x}", item.cpu, item.size);
+        LOG_DEBUG(Service_NVDRV, "Switch 2 released backing {:#x}+{:#x}", range_cpu, range_size);
     }
 }
 
@@ -361,7 +359,6 @@ void nvhost_as_gpu::Nx2Sparse(u64 gpu_address, u64 size, bool create) {
             if (!gmmu) {
                 return;
             }
-            auto& smmu = system.Host1x().MemoryManager();
             const auto it = nx2_sparse_ranges.find(gpu_address);
             if (it == nx2_sparse_ranges.end()) {
                 return;

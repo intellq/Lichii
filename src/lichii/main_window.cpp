@@ -5352,10 +5352,10 @@ void MainWindow::PrepareShaderPrecache(u64 title_id, const std::filesystem::path
         QMessageBox box(QMessageBox::Question, tr("Precache Shaders"),
                         tr("The shaders of this game are not precached yet. Precache them now?\n\n"
                            "The game starts when they are done. The first time, the game files "
-                           "are read and their shaders are built on every CPU thread, with the "
-                           "shaders earlier play sessions saved, which takes a few minutes. Later "
-                           "launches only build what is new, until the GPU driver changes. The "
-                           "loading screen has a Skip button.\n\n"
+                           "are read and their compute shaders are built on every CPU thread, "
+                           "which takes a few minutes. Later launches only build what is new, "
+                           "until the GPU driver changes. The loading screen has a Skip "
+                           "button.\n\n"
                            "You can change this in Configure, Graphics, Advanced."),
                         QMessageBox::NoButton, this);
         QPushButton* const precache = box.addButton(tr("Precache now"), QMessageBox::AcceptRole);
@@ -6241,8 +6241,8 @@ void MainWindow::UpdateFrameGenButton() {
         unavailable = tr("This build was compiled without frame generation.");
         break;
     case VideoCore::FrameGenState::UnsupportedGpu:
-        unavailable = tr("This GPU lacks Vulkan features LSFG needs (Vulkan memory model, null "
-                         "descriptors and 16-bit floats). The Optical Flow type may still work.");
+        unavailable = tr("This GPU lacks Vulkan features LSFG needs (Vulkan memory model and null "
+                         "descriptors). The Optical Flow type may still work.");
         break;
     case VideoCore::FrameGenState::UnsupportedSurface:
         unavailable = tr("This GPU can't write to the window's swapchain format from a shader, so "

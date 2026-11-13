@@ -566,9 +566,12 @@ FN_MAX_LIMIT_LIST
         return is_warp_potentially_bigger;
     }
 
-    /// Returns true if the device can be forced to use the guest warp size.
+    /// Returns true if the device can be forced to use the guest warp size. Lavapipe's
+    /// subgroups are 8 wide and can't be forced to 32.
     bool IsGuestWarpSizeSupported(VkShaderStageFlagBits stage) const {
-        return properties.subgroup_size_control.requiredSubgroupSizeStages & stage;
+        const auto& control = properties.subgroup_size_control;
+        return (control.requiredSubgroupSizeStages & stage) != 0 &&
+               control.minSubgroupSize <= GuestWarpSize && GuestWarpSize <= control.maxSubgroupSize;
     }
 
     /// Returns true if the device supports the provided subgroup feature.
@@ -1108,6 +1111,9 @@ FN_MAX_LIMIT_LIST
     /// budget. 0 without the extension. The unused part of the allocator's blocks is not
     /// subtracted: see GetDeviceMemorySlack().
     u64 GetDeviceMemoryBudget() const;
+
+    /// GetDeviceMemoryBudget() before the cap an integrated GPU gets: the heap's own budget.
+    u64 GetDeviceHeapMemoryBudget() const;
 
     /// Memory the allocator holds from the driver in the main device-local heap but has no
     /// allocation in (the unused part of its blocks). GetDeviceMemoryUsage() does not count it,

@@ -154,9 +154,9 @@ private:
     [[nodiscard]] GraphicsPipeline* BuiltPipeline(GraphicsPipeline* pipeline) noexcept;
 
     /// With `keep_pointers`, the slots an evicted pipeline of this key bound stay storage buffer
-    /// pointers whatever they hold now.
+    /// pointers whatever they hold now. `evicted`: a pipeline of this key was evicted.
     std::unique_ptr<GraphicsPipeline> CreateGraphicsPipeline(
-        const VideoCommon::EvictedPointerSlots::Slots* keep_pointers = nullptr);
+        const VideoCommon::EvictedPointerSlots::Slots* keep_pointers, bool evicted);
 
     /// Builds the current key's pipeline again from what an evicted one kept, without translating
     std::unique_ptr<GraphicsPipeline> RebuildGraphicsPipeline(KeptGraphicsStages kept);
@@ -233,7 +233,7 @@ private:
                          std::stop_token stop_loading,
                          const VideoCore::DiskResourceLoadCallback& callback,
                          std::chrono::steady_clock::time_point load_begin, bool precache,
-                         std::unordered_set<u64> precached_pipelines, bool build_at_boot);
+                         bool build_at_boot);
 
     /// Reads a v2 graphics record and translates its pipeline, left for Build(). Null when it
     /// doesn't translate, `incomplete` when the record lacks a value the translation reads.
@@ -267,24 +267,21 @@ private:
     /// only pipelines built during play.
     void QueueVulkanPipelineCacheSave();
 
-    /// One build of the shader precache: a pipeline built and destroyed
+    /// One build of the shader precache: a compute pipeline built and destroyed
     struct PrecacheJob {
-        u64 graphics_hash{}; ///< The cached graphics pipeline it builds, 0 for a compute program
         /// Translates the pipeline and returns its build, which is true when it built (the job's
         /// CPU and driver stages)
         Common::UniqueFunction<Common::UniqueFunction<bool>> translate;
         u64 cpu_bytes{};
     };
 
-    /// Shader precache before the game starts (precache_shaders), on every CPU thread: the cached
-    /// graphics pipelines this boot skipped (`jobs`; `precached` holds those built by earlier
-    /// precaches) and the compute programs of the title's precache file (made from the game files,
-    /// missing reads guessed) are built, then thrown away. They only fill the driver's shader
-    /// cache, so a later build of the same pipeline finds the driver's work done. Reports progress
-    /// through `callback` and returns when it is done, skipped from the loading screen or the load
-    /// is stopped.
-    void PrecacheShaders(u64 title_id, std::vector<PrecacheJob> jobs,
-                         std::unordered_set<u64> precached, std::stop_token stop_loading,
+    /// Shader precache before the game starts (precache_shaders), on every CPU thread: the compute
+    /// programs of the title's precache file (made from the game files, missing reads guessed) are
+    /// built, then thrown away. They only fill the driver's shader cache, so a later build of the
+    /// same pipeline finds the driver's work done. The cached graphics pipelines the boot skipped
+    /// are the background prebuild's. Reports progress through `callback` and returns when it is
+    /// done, skipped from the loading screen or the load is stopped.
+    void PrecacheShaders(u64 title_id, std::stop_token stop_loading,
                          const VideoCore::DiskResourceLoadCallback& callback);
 
     /// Builds and drops every pipeline of the game's precompiled file (written offline by
@@ -430,6 +427,8 @@ private:
     /// IR of the pipelines whose job emits their SPIR-V
     QueuedIrBudget queued_ir{VideoCommon::DefaultShaderJobBudget()};
     std::optional<ScheduledPrebuild<GraphicsPipelineCacheKey, GraphicsPipeline>> scheduled_prebuild;
+    /// When the boot load that started the background prebuild began, until the prebuild is done
+    std::optional<std::chrono::steady_clock::time_point> prebuild_load_begin;
 
     GraphicsPipelineCacheKey graphics_key{};
     /// Native titles: the state as the registers give it. FixedPipelineState refreshes some fields
@@ -450,6 +449,7 @@ private:
     /// Common::TrimHeap on the serialization thread (Linux with glibc).
     void QueueHeapTrim(const char* reason);
     std::unordered_set<u64> used_and_evicted; ///< Key hashes of pipelines used this session, evicted since
+    std::unordered_set<u64> evicted_hashes;   ///< Key hashes of evicted pipelines not created again
     VideoCommon::EvictedPointerSlots evicted_pointer_slots;
     /// The SPIR-V and stage infos of evicted pipelines, which build them again when used again
     VideoCommon::BoundedStore<GraphicsPipelineCacheKey, KeptGraphicsStages> kept_stages{0};

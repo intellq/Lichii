@@ -30,6 +30,7 @@
 #include "core/file_sys/vfs/vfs.h"
 #include "core/file_sys/vfs/vfs_real.h"
 #include "core/loader/loader.h"
+#include "video_core/shader_warm/emission_stamp.h"
 #include "video_core/shader_warm/shader_archives.h"
 #include "video_core/shader_warm/shader_warm_builder.h"
 #include "video_core/shader_warm/warm_records.h"
@@ -45,7 +46,6 @@ constexpr std::string_view StageConverting = "Converting";
 constexpr std::string_view StageWriting = "Writing";
 /// Conversions in flight (each holds a copy of its program).
 constexpr size_t MaxPendingJobs = 2048;
-constexpr u32 PrecachedPipelinesMagic = 0x31504750; // "PGP1"
 
 fs::path TitleDir(u64 title_id) {
     return Common::FS::GetEdenPath(Common::FS::EdenPath::ShaderDir) /
@@ -267,6 +267,8 @@ private:
     std::vector<std::thread> workers;
 };
 
+constexpr u32 PrecachedPipelinesMagic = 0x31504750; // "PGP1"
+
 template <typename T>
 void Write(std::ofstream& out, const T& value) {
     out.write(reinterpret_cast<const char*>(&value), sizeof(T));
@@ -329,6 +331,10 @@ u64 ReadWarmCount(const fs::path& warm_file) {
     return !ec && actual == size ? entries : 0;
 }
 
+u64 EmissionStamp() {
+    return GeneratedEmissionStamp;
+}
+
 std::optional<WarmStamp> CurrentWarmStamp(const fs::path& warm_file, u64 entries, u32 driver,
                                           u32 device_id, u32 cache_version, u64 variant) {
     std::error_code ec;
@@ -336,19 +342,43 @@ std::optional<WarmStamp> CurrentWarmStamp(const fs::path& warm_file, u64 entries
     if (ec) {
         return std::nullopt;
     }
-    const auto time = fs::last_write_time(warm_file, ec);
-    if (ec) {
+    // Hashed in chunks (the file is ~70 MB): tens of milliseconds at boot.
+    std::ifstream in(warm_file, std::ios::binary);
+    if (!in) {
         return std::nullopt;
     }
-    return WarmStamp{size,      static_cast<s64>(time.time_since_epoch().count()),
-                     entries,   driver,
-                     device_id, cache_version, variant};
+    std::vector<char> chunk(8u << 20);
+    u64 hash = size;
+    u64 read_total = 0;
+    while (in) {
+        in.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        const auto got = static_cast<size_t>(in.gcount());
+        if (got == 0) {
+            break;
+        }
+        hash = Common::CityHash64WithSeed(chunk.data(), got, hash);
+        read_total += got;
+    }
+    if (read_total != size) {
+        return std::nullopt;
+    }
+    return WarmStamp{.size = size,
+                     .content_hash = hash,
+                     .entries = entries,
+                     .driver = driver,
+                     .device_id = device_id,
+                     .cache_version = cache_version,
+                     .variant = variant};
 }
 
 std::optional<WarmStamp> ReadWarmMarker(const fs::path& warm_file) {
     std::ifstream in(WarmMarkerPath(warm_file));
     WarmStamp stamp;
-    if (!(in >> stamp.size >> stamp.write_time >> stamp.entries >> stamp.driver >>
+    // A marker of the older format (last-write time, no variant) fails here: the compute
+    // programs not in the cache are built once more.
+    std::string format;
+    if (!(in >> format) || format != "v2" ||
+        !(in >> stamp.size >> stamp.content_hash >> stamp.entries >> stamp.driver >>
           stamp.device_id >> stamp.cache_version >> stamp.variant)) {
         return std::nullopt;
     }
@@ -357,10 +387,23 @@ std::optional<WarmStamp> ReadWarmMarker(const fs::path& warm_file) {
 
 bool WriteWarmMarker(const fs::path& warm_file, const WarmStamp& stamp) {
     std::ofstream out(WarmMarkerPath(warm_file), std::ios::trunc);
-    out << stamp.size << ' ' << stamp.write_time << ' ' << stamp.entries << ' ' << stamp.driver
-        << ' ' << stamp.device_id << ' ' << stamp.cache_version << ' ' << stamp.variant << '\n';
+    out << "v2 " << stamp.size << ' ' << stamp.content_hash << ' ' << stamp.entries << ' '
+        << stamp.driver << ' ' << stamp.device_id << ' ' << stamp.cache_version << ' '
+        << stamp.variant << '\n';
     out.close();
     return static_cast<bool>(out);
+}
+
+void DropStaleWarmMarker(const fs::path& warm_file, const fs::path& new_file) {
+    if (const auto marker = ReadWarmMarker(warm_file)) {
+        const auto incoming = CurrentWarmStamp(new_file, 0, 0, 0, 0);
+        if (incoming && incoming->size == marker->size &&
+            incoming->content_hash == marker->content_hash) {
+            return;
+        }
+    }
+    std::error_code ignored;
+    fs::remove(WarmMarkerPath(warm_file), ignored);
 }
 
 bool WarmPending(u64 title_id) {
@@ -697,7 +740,9 @@ Result BuildWarmFilesWith(Core::System& system, const fs::path& game_path, u64 t
     if (!compute_out) {
         return fail("Writing the precache file failed");
     }
-    // A new file: the marker and count of the old one no longer apply.
+    // A new file: the count of the old one no longer applies, and its marker only when the
+    // contents changed (the marker also carries the driver and variant, checked at boot).
+    DropStaleWarmMarker(compute_path, compute_tmp);
     std::error_code ignored;
     fs::remove(WarmMarkerPath(compute_path), ignored);
     fs::remove(WarmMarkerPath(WarmVariantPath(compute_path, ShaderCacheV2::PrecompiledShaderStamp)),
