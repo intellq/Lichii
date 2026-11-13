@@ -5046,7 +5046,7 @@ ImageId TextureCache<P>::RelocationCandidate(const ImageInfo& new_info, GPUVAddr
     }
     // Registered in this channel's GPU page table (UnregisterImage clears that one).
     const auto& gpu_pages = *channel_state->gpu_page_table;
-    const auto page = gpu_pages.find(old.gpu_addr >> YUZU_PAGEBITS);
+    const auto page = gpu_pages.find(old.gpu_addr >> LICHII_PAGEBITS);
     if (page == gpu_pages.end() || std::ranges::find(page->second, old_id) == page->second.end()) {
         return ImageId{};
     }
