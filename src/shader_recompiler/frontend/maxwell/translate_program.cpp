@@ -511,9 +511,6 @@ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Blo
     if (!normalized_host_info.support_int64) {
         Optimization::LowerInt64ToInt32(program);
     }
-    if (!normalized_host_info.support_conditional_barrier) {
-        Optimization::ConditionalBarrierPass(program);
-    }
     lower_scope.reset();
     // Each pass, timed when the translation profile is on.
     const auto pass = [](Step step, auto&& run) {
@@ -523,6 +520,9 @@ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Blo
     pass(Step::SsaRewrite, [&] { Optimization::SsaRewritePass(program); });
 
     pass(Step::ConstantPropagation, [&] { Optimization::ConstantPropagationPass(env, program); });
+    if (!normalized_host_info.support_conditional_barrier) {
+        Optimization::ConditionalBarrierPass(program);
+    }
 
     pass(Step::Position, [&] { Optimization::PositionPass(env, program); });
     pass(Step::BlitConstants, [&] { Optimization::BlitConstantsPass(env, program); });

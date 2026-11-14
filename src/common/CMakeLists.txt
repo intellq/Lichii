@@ -50,6 +50,8 @@ add_library(
     dkb_cpu_trace.h
     nx2_hitch.cpp
     nx2_hitch.h
+    jit_symbols.cpp
+    jit_symbols.h
     nx2_sampler.cpp
     nx2_sampler.h
     dynamic_library.cpp

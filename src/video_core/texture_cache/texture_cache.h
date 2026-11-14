@@ -272,26 +272,36 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory, bool burst_write_b
     u32 pass_deferred = 0;
     u64 pass_download_bytes = 0;
     std::chrono::steady_clock::duration pass_download_time{};
-    // Images Cleanup skips (decoding, costly, put off) do not spend num_iterations, so the clean
-    // ones behind them still get their turn; this caps the images visited per sequence instead.
-    size_t visits_left = 0;
-    const auto Cleanup = [this, &num_iterations, &visits_left, &high_priority_mode,
-                          &aggressive_mode, &evict_old_costly, &pass_downloads, &pass_deferred,
-                          &pass_download_bytes, &pass_download_time,
-                          out_of_memory, burst_write_backs](ImageId image_id) {
-        if (num_iterations == 0 || visits_left == 0) {
-            return true;
-        }
-        --visits_left;
-        auto& image = slot_images[image_id];
+    // Whether this pass may delete the image (#1731): checked before an iteration is spent, and
+    // by Collect on its candidates, so images it must skip don't use up the pass.
+    const auto CanEvict = [this, &high_priority_mode, &aggressive_mode,
+                           &evict_old_costly](ImageId image_id, bool* out_must_download = nullptr) {
+        const auto& image = slot_images[image_id];
         if (True(image.flags & ImageFlagBits::IsDecoding)) {
             return false;
         }
         const bool must_download = IsDownloadable(image);
-        if ((!aggressive_mode && !evict_old_costly && True(image.flags & ImageFlagBits::CostlyLoad)) ||
+        if (out_must_download != nullptr) {
+            *out_must_download = must_download;
+        }
+        if ((!aggressive_mode && !evict_old_costly &&
+             True(image.flags & ImageFlagBits::CostlyLoad)) ||
             (!high_priority_mode && must_download)) {
             return false;
         }
+        return true;
+    };
+    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode, &CanEvict,
+                          &pass_downloads, &pass_deferred, &pass_download_bytes,
+                          &pass_download_time, out_of_memory, burst_write_backs](ImageId image_id) {
+        if (num_iterations == 0) {
+            return true;
+        }
+        bool must_download = false;
+        if (!CanEvict(image_id, &must_download)) {
+            return false;
+        }
+        auto& image = slot_images[image_id];
         // EDEN_NX2_EXP57 (live, 0 = off): at most one download with a full wait for the GPU per
         // frame unless an allocation failed. A player's first high-priority pass downloaded
         // image after image and froze for 3 s (fable52_answer_3 s7); the rest wait for later
@@ -348,6 +358,15 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory, bool burst_write_b
         if (True(image.flags & ImageFlagBits::Tracked)) {
             UntrackImage(image, image_id);
         }
+        if constexpr (requires(const Image& img) { img.MemoryBlock(); }) {
+            const auto block = image.MemoryBlock();
+            if (block.block != 0) {
+                const auto it = block_image_bytes.find(block.block);
+                if (it != block_image_bytes.end()) {
+                    it->second -= (std::min)(it->second, block.size);
+                }
+            }
+        }
         ++(True(image.flags & ImageFlagBits::CostlyLoad) ? gc_costly_deletes : gc_deletes);
         UnregisterImage(image_id);
         trace_delete_reason = aggressive_mode      ? "gc-aggressive"
@@ -372,18 +391,23 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory, bool burst_write_b
     // used). Among the oldest candidates (8 per image this pass may delete), those in the
     // emptiest blocks go first, so blocks drain and go back to the driver; placement already
     // prefers the fullest blocks (best fit). Images with memory of their own sit in the middle.
-    const auto Collect = [&] {
-        if (frame_tick < ticks_to_destroy) {
+    const auto Collect = [&](u64 age_override = 0) {
+        const u64 required_age = age_override != 0 ? age_override : ticks_to_destroy;
+        if (num_iterations == 0 || frame_tick < required_age) {
             return;
         }
-        const u64 last_tick = frame_tick - ticks_to_destroy;
-        visits_left = num_iterations * 8;
+        const u64 last_tick = frame_tick - required_age;
         if constexpr (requires(const Image& image) { image.MemoryBlock(); }) {
             std::vector<ImageId> candidates;
             const size_t limit = num_iterations * 8;
+            // A01: the walk stops after a bounded number of visits too, so a LRU whose oldest end
+            // is full of images this pass can't delete is not walked to its end every frame.
+            size_t visits = limit * 4;
             lru_cache.ForEachItemBelow(last_tick, [&](ImageId image_id) {
-                candidates.push_back(image_id);
-                return candidates.size() >= limit;
+                if (CanEvict(image_id)) {
+                    candidates.push_back(image_id);
+                }
+                return candidates.size() >= limit || --visits == 0;
             });
             if (candidates.empty()) {
                 return;
@@ -494,8 +518,7 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory, bool burst_write_b
     }();
     if (high_priority_mode && old_age != 0 && frame_tick > old_age) {
         evict_old_costly = true;
-        visits_left = num_iterations * 8;
-        lru_cache.ForEachItemBelow(frame_tick - old_age, Cleanup);
+        Collect(old_age);
         evict_old_costly = false;
     }
     Collect();
