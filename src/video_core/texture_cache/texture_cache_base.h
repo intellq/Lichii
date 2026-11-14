@@ -193,6 +193,17 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
     u64 pressure_margin{};        ///< Extra room under the budget after images did not fit
     u64 pressure_quiet_frames{};  ///< Frames since the last such image
     u64 slack_margin{};           ///< Extra room for allocator block space the driver counts as used
+    // Device-local memory the allocator placed in host memory (heap over budget): see TickFrame.
+    u64 spill_margin{};           ///< Extra room for it, sized to what spilled (at most 768 MiB)
+    u64 spill_window_bytes{};     ///< Spilled in the current window
+    u64 spill_window_start{};     ///< frame_tick the current window began at
+    u64 spill_quiet_frames{};     ///< Frames since the last spill
+    u64 spill_collect_tick{};     ///< frame_tick of the first forced collect of this episode + 1
+    u32 spill_forced_collects{};  ///< Forced collects in this episode
+    u64 spill_last_collect{};     ///< frame_tick of the last forced collect
+    u64 spill_log_bytes{};        ///< Spilled since the last spill log line
+    u32 spill_log_collects{};     ///< Forced collects since the last spill log line
+    std::chrono::steady_clock::time_point spill_log_time{};
     u64 astc_opaque_images{};
     u64 astc_alpha_images{};
     Common::ScratchBuffer<u8> astc_scan_buffer;
@@ -409,7 +420,8 @@ public:
     /// Health check of a game's DLSS network output (dst) against its input (src); see the
     /// runtime's ProbeGameDlssOutput. Returns an earlier check's result when one is ready.
     std::optional<VideoCore::GameDlssProbe> ProbeGameDlssOutput(
-        const Tegra::Engines::Fermi2D::Surface& dst, const Tegra::Engines::Fermi2D::Surface& src);
+        const Tegra::Engines::Fermi2D::Surface& dst, const Tegra::Engines::Fermi2D::Surface& src,
+        std::optional<std::array<u32, 2>> src_region = std::nullopt);
 
     /// Try to find a cached image view in the given CPU address
     [[nodiscard]] std::pair<ImageView*, bool> TryFindFramebufferImageView(
