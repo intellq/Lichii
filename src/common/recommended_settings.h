@@ -41,6 +41,8 @@ void ForEachRecommendedSetting(Values& settings, Func&& func) {
     entry(settings.precompiled_prepare, PrecompiledPrepare::WhilePlaying);
     entry(settings.use_video_framerate, false);
     entry(settings.mkw_30fps, false);
+    entry(settings.mkw_60fps, false);
+    entry(settings.mkw_60fps_fallback, true);
     entry(settings.mkw_dynamic_fps, false);
     entry(settings.hyrule_dynamic_fps, false);
     entry(settings.hyrule_30fps, false);

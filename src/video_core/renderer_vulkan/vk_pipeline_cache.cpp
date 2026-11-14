@@ -8,6 +8,7 @@
 #include <cctype>
 #include <atomic>
 #include <bit>
+#include <charconv>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -114,7 +115,17 @@ using VideoCommon::GuessMissing;
 using VideoCommon::GraphicsEnvironment;
 
 constexpr u32 CACHE_VERSION = VideoCommon::VulkanPipelineCacheVersion;
-constexpr size_t VULKAN_CACHE_FLUSH_PIPELINES = 128;
+const size_t VULKAN_CACHE_FLUSH_PIPELINES = []() -> size_t {
+    if (const char* env = std::getenv("EDEN_NX2_VULKAN_CACHE_FLUSH")) {
+        const std::string_view text{env};
+        size_t value = 0;
+        const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
+        if (ec == std::errc{} && end == text.data() + text.size() && value > 0) {
+            return value;
+        }
+    }
+    return 128;
+}();
 constexpr size_t VULKAN_CACHE_FLUSH_MIN_SECONDS = 30;
 constexpr auto& VULKAN_CACHE_MAGIC_NUMBER = VideoCommon::VulkanDriverPipelineCacheMagic;
 
@@ -2218,7 +2229,13 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
 
     PreparePrecompiled(pipeline_cache_filename.parent_path(), stop_loading, callback);
 
-    if (use_vulkan_pipeline_cache) {
+    // Skip the intermediate save where reading the driver cache during a build crashes (see
+    // Device::CanReadPipelineCacheDuringBuilds): without a precache the background prebuild can
+    // already be building into the cache here, and nothing joins its builds before this read; a
+    // stopped load can leave a cancelled prebuild build running past the same point. The
+    // session-end save in ~PipelineCache stays ordered after the build workers shut down and
+    // still covers persistence.
+    if (use_vulkan_pipeline_cache && device.CanReadPipelineCacheDuringBuilds()) {
         SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
                                      CACHE_VERSION);
         size_t size = 0;

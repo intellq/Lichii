@@ -23,7 +23,7 @@ the old way there.
 | Fragment subgroup shuffles | AMD's proprietary driver gets them wrong | Broadcast fallback on that driver | [#273] |
 | Depth-compare samples | Undefined on colour or integer images; AMD returned green | Depth-compare images stay floating point. Binding the null image for depth-compare samples of uncomparable images is proposed in the open PR | [#273]; [#354] (open) |
 | Task and mesh programs | Native task/mesh draws hang AMD GPUs. RADV resets the GPU within minutes on RX 6000, 7000 and 9000 cards, often taking the desktop session down with it; Mesa 26.2.6 still hangs, though it recovers more often. AMD's Windows driver times out (TDR) on the Radeon 780M | On AMD drivers (RADV and AMD's own), task/mesh draws take the compute fallback ([#569]). It can be slower in scenes full of foliage, and it skips the mesh programs it can't run (per-primitive outputs, primitives other than triangles, layered output); Ocarina of Time testers report all geometry drawn. The Mesh Shaders setting (GraphicsExtra tab, Vulkan Extensions) picks Native or Compute Fallback instead of Automatic, also per game | [#316], [#871] |
-| Native FP16 arithmetic | Turned off on AMD as a driver workaround | Turned off, with no override yet. An `EDEN_AMD_FP16=1` switch to keep it for testing is proposed in the open PR | [#378] (open) |
+| Native FP16 arithmetic | Turned off on AMD as a driver workaround | Turned off on every AMD driver. An `EDEN_AMD_FP16=1` test switch was closed unmerged; keeping FP16 needs a driver-version policy backed by DKCR and Ocarina of Time evidence | [#378] (closed) |
 
 Not specific to AMD, but easy to mistake for an AMD bug:
 
