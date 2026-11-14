@@ -645,6 +645,7 @@ void Scheduler::AllocateWorkerCommandBuffer() {
         .pInheritanceInfo = nullptr,
     });
     current_upload_cmdbuf = vk::CommandBuffer(command_pool->Commit(), device.GetDispatchLoader());
+    upload_cmdbuf_used = false;
     current_upload_cmdbuf.Begin({
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .pNext = nullptr,
@@ -871,6 +872,7 @@ void Scheduler::TraceGpuSubmission() {
     if (!trace_gpu_sampling || trace_gpu_count == TraceMaxSubmissions) {
         return;
     }
+    upload_cmdbuf_used = true;
     current_upload_cmdbuf.ResetQueryPool(*trace_query_pool, trace_gpu_count * 2, 2);
     if (trace_gpu_count == 0 && trace_work_pool) {
         // Draws are timed inside render passes, where queries cannot be reset.
@@ -902,7 +904,17 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
             .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
         };
-        upload_cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, WRITE_BARRIER);
+        // The barrier only orders upload copies; skip it when nothing was recorded. The command
+        // buffer is still submitted so the master semaphore path is unchanged.
+        // EDEN_NX2_SKIP_EMPTY_UPLOAD_BARRIER=0 restores the unconditional barrier.
+        static const bool skip_empty_barrier = [] {
+            const char* value = std::getenv("EDEN_NX2_SKIP_EMPTY_UPLOAD_BARRIER");
+            return value == nullptr || std::atoi(value) != 0;
+        }();
+        if (!skip_empty_barrier || upload_cmdbuf_used) {
+            upload_cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                          VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, WRITE_BARRIER);
+        }
         upload_cmdbuf.End();
         if (trace_gpu_recording) {
             cmdbuf.WriteTimestamp(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, *trace_query_pool,

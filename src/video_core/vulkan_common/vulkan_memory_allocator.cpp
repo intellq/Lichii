@@ -86,6 +86,11 @@ namespace {
         return {};
     }
 
+    /// Only used when VK_EXT_memory_priority is enabled: staging stays at the lowest priority.
+    [[nodiscard]] float MemoryUsagePriority(MemoryUsage usage) {
+        return usage == MemoryUsage::DeviceLocal ? 0.5f : 0.f;
+    }
+
     [[nodiscard]] VmaMemoryUsage MemoryUsageVma(MemoryUsage usage) {
         switch (usage) {
             case MemoryUsage::DeviceLocal:
@@ -249,7 +254,8 @@ VkResult MemoryAllocator::AllocateImage(const VkImageCreateInfo &ci, bool dedica
             .memoryTypeBits = 0,
             .pool = VK_NULL_HANDLE,
             .pUserData = nullptr,
-            .priority = 0.f,
+            // Render targets and textures stay in VRAM under pressure (needs VK_EXT_memory_priority).
+            .priority = 1.f,
     };
 
     VkImage handle{};
@@ -408,7 +414,7 @@ VmaAllocation MemoryAllocator::AllocateSparseMemory(const VkMemoryRequirements &
         .memoryTypeBits = requirements.memoryTypeBits,
         .pool = VK_NULL_HANDLE,
         .pUserData = nullptr,
-        .priority = 0.f,
+        .priority = 0.5f,
     };
     VmaAllocation allocation{};
     VmaAllocationInfo info{};
@@ -490,7 +496,7 @@ vk::Buffer MemoryAllocator::CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsa
         .memoryTypeBits = usage == MemoryUsage::Stream ? 0u : valid_memory_types,
         .pool = VK_NULL_HANDLE,
         .pUserData = nullptr,
-        .priority = 0.f,
+        .priority = MemoryUsagePriority(usage),
     };
 
     VkBuffer handle{};
@@ -576,7 +582,7 @@ vk::Buffer MemoryAllocator::CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsa
         .memoryTypeBits = memory_type_bits,
         .pool = VK_NULL_HANDLE,
         .pUserData = nullptr,
-        .priority = 0.f,
+        .priority = MemoryUsagePriority(usage),
     };
 
     VkBuffer handle{};
@@ -671,7 +677,7 @@ MemoryCommit MemoryAllocator::Commit(const vk::Buffer &buffer, MemoryUsage usage
     ci.preferredFlags = MemoryUsagePreferredVmaFlags(usage);
     ci.pool = VK_NULL_HANDLE;
     ci.pUserData = nullptr;
-    ci.priority = 0.0f;
+    ci.priority = MemoryUsagePriority(usage);
 
     const VkBuffer raw = *buffer;
 

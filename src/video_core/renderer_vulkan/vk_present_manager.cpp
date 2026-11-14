@@ -3,6 +3,7 @@
 
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
 #include <thread>
 
 #include "common/display_hdr.h"
@@ -157,8 +158,13 @@ PresentManager::PresentManager(const vk::Instance& instance_,
     , storage_supported{CanStoreToFrame(device.GetPhysical(), swapchain.GetImageFormat())}
     // Frame generation needs the present thread to space generated frames without stalling the
     // emulator.
+    // EDEN_NX2_ASYNC_PRESENT=1 forces the present thread on without changing the setting.
     , use_present_thread{Settings::values.async_presentation.GetValue() ||
-                         Settings::values.frame_gen.GetValue()}
+                         Settings::values.frame_gen.GetValue() ||
+                         [] {
+                             const char* value = std::getenv("EDEN_NX2_ASYNC_PRESENT");
+                             return value != nullptr && std::atoi(value) != 0;
+                         }()}
 {
     SetImageCount();
 

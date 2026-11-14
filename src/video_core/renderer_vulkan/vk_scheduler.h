@@ -209,6 +209,11 @@ public:
     /// a source depends on a pending copy, or the batch is full. Call outside a render pass.
     void RecordUpload(VkBuffer src, VkBuffer dst, std::span<const VkBufferCopy> copies);
 
+    /// Marks the upload command buffer as written. Call only from work executed on the worker.
+    void MarkUploadCmdbufUsed() noexcept {
+        upload_cmdbuf_used = true;
+    }
+
     /// Send work to a separate thread.
     template <typename T>
         requires std::is_invocable_v<T, vk::CommandBuffer, vk::CommandBuffer>
@@ -561,6 +566,8 @@ private:
 
     vk::CommandBuffer current_cmdbuf;
     vk::CommandBuffer current_upload_cmdbuf;
+    /// Worker thread only: whether anything was recorded into current_upload_cmdbuf.
+    bool upload_cmdbuf_used{};
 
     DeferredClear deferred_clear;
 

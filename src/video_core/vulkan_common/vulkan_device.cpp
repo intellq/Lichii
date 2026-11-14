@@ -767,7 +767,13 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         properties.properties.limits.maxVertexInputBindings = 32;
     }
 
-    const auto dyna_state = Settings::values.dyna_state.GetValue();
+    auto dyna_state = Settings::values.dyna_state.GetValue();
+    // Test hook: EDEN_NX2_RADV_EDS3=1 raises the default EDS2 level to EDS3 on RADV only.
+    if (driver_id == VK_DRIVER_ID_MESA_RADV && dyna_state == Settings::ExtendedDynamicState::EDS2 &&
+        EnvFlagSet("EDEN_NX2_RADV_EDS3")) {
+        LOG_INFO(Render_Vulkan, "EDEN_NX2_RADV_EDS3 set, using EDS3 on RADV");
+        dyna_state = Settings::ExtendedDynamicState::EDS3;
+    }
     switch (dyna_state) {
     case Settings::ExtendedDynamicState::Disabled:
         // Level 0: Disable all extended dynamic state extensions
@@ -958,6 +964,9 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     VmaAllocatorCreateFlags flags = VMA_ALLOCATOR_CREATE_EXTERNALLY_SYNCHRONIZED_BIT;
     if (extensions.memory_budget) {
         flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
+    }
+    if (extensions.memory_priority) {
+        flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_PRIORITY_BIT;
     }
     if (extensions.buffer_device_address) {
         flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
@@ -1799,6 +1808,15 @@ void Device::RemoveUnsuitableExtensions() {
     extensions.descriptor_buffer = features.descriptor_buffer.descriptorBuffer;
     RemoveExtensionFeatureIfUnsuitable(extensions.descriptor_buffer, features.descriptor_buffer,
                                        VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
+
+    // VK_EXT_memory_priority: EDEN_NX2_MEMORY_PRIORITY=0 leaves it off.
+    {
+        const char* value = std::getenv("EDEN_NX2_MEMORY_PRIORITY");
+        const bool enabled = value == nullptr || std::atoi(value) != 0;
+        extensions.memory_priority = enabled && features.memory_priority.memoryPriority;
+        RemoveExtensionFeatureIfUnsuitable(extensions.memory_priority, features.memory_priority,
+                                           VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME);
+    }
 
     // VK_EXT_extended_dynamic_state
     extensions.extended_dynamic_state = features.extended_dynamic_state.extendedDynamicState;

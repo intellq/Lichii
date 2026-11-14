@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cstdlib>
 #include <array>
 #include <limits>
 #include <mutex>
@@ -34,6 +35,14 @@
 namespace Vulkan {
 
 namespace {
+bool SwapchainClipped() {
+    static const bool clipped = [] {
+        const char* value = std::getenv("EDEN_NX2_SWAPCHAIN_CLIPPED");
+        return value == nullptr || std::atoi(value) != 0;
+    }();
+    return clipped;
+}
+
 
 /// Streamline's DLSS Frame Generation presents and paces the frames in this format. Turning it
 /// on or off changes the present mode, which recreates the swapchain as NVIDIA asks.
@@ -436,7 +445,9 @@ void Swapchain::CreateSwapchain(const VkSurfaceCapabilitiesKHR& capabilities) {
 #endif
         .compositeAlpha = alpha_flags,
         .presentMode = present_mode,
-        .clipped = VK_FALSE,
+        // Lets the driver skip pixels hidden by other windows. Swapchain images are never read back
+        // (no TRANSFER_SRC usage). EDEN_NX2_SWAPCHAIN_CLIPPED=0 restores VK_FALSE.
+        .clipped = SwapchainClipped() ? VK_TRUE : VK_FALSE,
         .oldSwapchain = VkSwapchainKHR{},
     };
     const u32 graphics_family{device.GetGraphicsFamily()};
