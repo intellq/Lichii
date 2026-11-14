@@ -49,6 +49,9 @@
 
 #ifdef __linux__
 #include <sys/resource.h>
+#if defined(__linux__) && !defined(__ANDROID__)
+#include <sys/prctl.h>
+#endif
 #include <algorithm>
 
 namespace {
@@ -663,6 +666,15 @@ void SetCurrentThreadPriority(ThreadPriority new_priority) {
     }
     RememberCurrentThreadNice(tid, nice_value);
 #elif defined(__linux__)
+    // Sleeps on these threads (HostTiming, DSP, pushers) get up to 50 us of default timer slack
+    // added. The slack is per thread; EDEN_NX2_TIMER_SLACK=0 keeps the kernel default.
+    static const bool lower_timer_slack = [] {
+        const char* env = std::getenv("EDEN_NX2_TIMER_SLACK");
+        return env == nullptr || std::strtol(env, nullptr, 10) != 0;
+    }();
+    if (lower_timer_slack && new_priority >= ThreadPriority::High) {
+        prctl(PR_SET_TIMERSLACK, 1UL, 0UL, 0UL, 0UL);
+    }
     const int nice_value = NiceValueForPriority(new_priority);
     if (setpriority(PRIO_PROCESS, 0, nice_value) != 0) {
         LOG_DEBUG(Common, "Could not set thread nice value to {}: {}", nice_value,

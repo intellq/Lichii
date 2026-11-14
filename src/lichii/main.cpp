@@ -115,11 +115,18 @@ static void SetUpNvidiaShaderDiskCache() {
     }
     setenv("__GL_SHADER_DISK_CACHE_SIZE", "10737418240", 0);
 }
+
+/// Mesa drivers (RADV, ANV) also rely on their disk cache and trim it at about 1 GiB by default.
+/// Raise the limit to 10 GiB, keeping a value the user already set. Other drivers ignore it.
+static void SetUpMesaShaderDiskCache() {
+    setenv("MESA_SHADER_CACHE_MAX_SIZE", "10G", 0);
+}
 #endif
 
 int main(int argc, char* argv[]) {
 #if defined(__unix__) && !defined(__APPLE__) && !defined(__ANDROID__)
     SetUpNvidiaShaderDiskCache();
+    SetUpMesaShaderDiskCache();
 #endif
     LoadNx2Switches(argv[0]);
 #if LICHII_ROOM
