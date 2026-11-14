@@ -597,7 +597,9 @@ private:
     void OnGPUASRegister(size_t map_id) final override;
 
     /// Runs the Garbage Collector.
-    void RunGarbageCollector(bool out_of_memory);
+    /// `burst_write_backs`: an image failed to allocate, so every write-back the pass needs is
+    /// done now. A collect forced for another reason keeps to one write-back a frame (EXP57).
+    void RunGarbageCollector(bool out_of_memory, bool burst_write_backs);
 
     /// Deletes images whose memory went entirely to newer images (see ClassifySuperseded).
     void DeleteSupersededImages();

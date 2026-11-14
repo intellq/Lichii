@@ -185,7 +185,7 @@ void TextureCache<P>::DeleteSupersededImages() {
 }
 
 template <class P>
-void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
+void TextureCache<P>::RunGarbageCollector(bool out_of_memory, bool burst_write_backs) {
     const StutterTrace::SiteScope site{StutterTrace::Site::TextureCollect};
     bool high_priority_mode = false;
     bool aggressive_mode = false;
@@ -233,7 +233,7 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
     const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
                           &evict_old_costly, &pass_downloads, &pass_deferred,
                           &pass_download_bytes, &pass_download_time,
-                          out_of_memory](ImageId image_id) {
+                          out_of_memory, burst_write_backs](ImageId image_id) {
         if (num_iterations == 0) {
             return true;
         }
@@ -254,7 +254,10 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
         // On a loading screen nothing is drawn with the last area's targets, so every one of them
         // ages out together: written back one after the other, they held the GPU thread for
         // 20 s to 2 min on a 16 GB RADV card near its budget (OoT area loads with FSR 4 output).
-        if (must_download && !out_of_memory && limit_downloads &&
+        // A collect forced by memory spilled to host memory (#1686) is not out of memory: with
+        // the limit lifted it wrote back 418 images (2872 MiB) in one 99 s pass on a loading
+        // screen. Only a failed image lifts it.
+        if (must_download && !burst_write_backs && limit_downloads &&
             gc_waited_frame == frame_tick) {
             ++gc_downloads_deferred;
             ++pass_deferred;
@@ -947,7 +950,7 @@ void TextureCache<P>::TickFrame() {
     // A forced collect for memory spilled to host memory collects as at the critical threshold
     // for this frame, without the re-upload of images left out that a failed image gets.
     if (out_of_memory || spill_collect || total_used_memory > minimum_memory) {
-        RunGarbageCollector(out_of_memory || spill_collect);
+        RunGarbageCollector(out_of_memory || spill_collect, out_of_memory);
     }
     if (out_of_memory) {
         // Textures left out for lack of memory are made again on their next read, once a frame
