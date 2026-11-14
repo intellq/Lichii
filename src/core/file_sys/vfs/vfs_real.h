@@ -21,6 +21,8 @@ namespace FileSys {
 
 struct FileReference : public Common::IntrusiveListBaseNode<FileReference> {
     std::shared_ptr<Common::FS::IOFile> file{};
+    // Serializes seek + read on a read-only file once the filesystem lock is released.
+    std::mutex io_lock;
 };
 
 class RealVfsFile;

@@ -340,6 +340,19 @@ std::size_t RealVfsFile::GetSize() const {
     if (size) {
         return *size;
     }
+    if (perms == OpenMode::Read) {
+        // Read-only: do not hold the filesystem lock while waiting on a reader of this file.
+        std::shared_ptr<Common::FS::IOFile> file;
+        {
+            auto lk = base.RefreshReference(path, perms, *reference);
+            file = reference->file;
+        }
+        if (!file) {
+            return 0;
+        }
+        std::scoped_lock io{reference->io_lock};
+        return file->GetSize();
+    }
     auto lk = base.RefreshReference(path, perms, *reference);
     return reference->file ? reference->file->GetSize() : 0;
 }
@@ -363,6 +376,24 @@ bool RealVfsFile::IsReadable() const {
 }
 
 std::size_t RealVfsFile::Read(u8* data, std::size_t length, std::size_t offset) const {
+    if (perms == OpenMode::Read) {
+        // The filesystem lock only guards the LRU lists and the open handle. The handle is held
+        // by shared_ptr, so an eviction by another thread cannot close it mid-read, and the
+        // per-file lock keeps seek + read atomic. Reads of different files run in parallel.
+        std::shared_ptr<Common::FS::IOFile> file;
+        {
+            auto lk = base.RefreshReference(path, perms, *reference);
+            file = reference->file;
+        }
+        if (!file) {
+            return 0;
+        }
+        std::scoped_lock io{reference->io_lock};
+        if (!file->Seek(static_cast<s64>(offset))) {
+            return 0;
+        }
+        return file->ReadSpan(std::span{data, length});
+    }
     auto lk = base.RefreshReference(path, perms, *reference);
     if (!reference->file || !reference->file->Seek(static_cast<s64>(offset))) {
         return 0;
