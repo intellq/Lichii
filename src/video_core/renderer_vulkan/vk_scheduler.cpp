@@ -773,10 +773,10 @@ void Scheduler::ReportHangMarkers() const {
     const u64 first = (std::max)(u64{finished} + 1, oldest);
     const u64 last = (std::min)(u64{recorded}, first + 15);
     for (u64 id = first; id <= last; ++id) {
-        const char* const state = id == u64{finished} + 1 ? "first unfinished"
+        const char* const progress = id == u64{finished} + 1 ? "first unfinished"
                                   : id <= started         ? "reached"
                                                           : "queued";
-        LOG_CRITICAL(Render_Vulkan, "Hang marker {} {}: {}", id, state,
+        LOG_CRITICAL(Render_Vulkan, "Hang marker {} {}: {}", id, progress,
                      describe(static_cast<u32>(id)));
     }
     for (u64 id = (std::max)(finished > 3 ? u64{finished} - 3 : u64{1}, oldest); id <= finished;
