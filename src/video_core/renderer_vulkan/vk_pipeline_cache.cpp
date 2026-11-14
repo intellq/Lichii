@@ -3,6 +3,12 @@
 
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#ifdef __linux__
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -869,7 +875,51 @@ size_t BackgroundPrecompiledJobs() {
             return static_cast<size_t>(count);
         }
     }
-    return std::clamp<size_t>(std::thread::hardware_concurrency() / 4, 1, 4);
+    size_t jobs = std::clamp<size_t>(std::thread::hardware_concurrency() / 4, 1, 4);
+#ifdef __linux__
+    // Each driver compile can hold 0.4 to 0.5 GB at its peak: with little free memory, fewer jobs.
+    // EDEN_NX2_PRECOMPILED_MEM_CAP=0 keeps the count above.
+    const char* const cap = std::getenv("EDEN_NX2_PRECOMPILED_MEM_CAP");
+    if (cap == nullptr || std::string_view{cap} != "0") {
+        std::ifstream meminfo{"/proc/meminfo"};
+        std::string key;
+        u64 available_kb{};
+        while (meminfo >> key) {
+            if (key == "MemAvailable:") {
+                meminfo >> available_kb;
+                const u64 spare_kb = available_kb > u64{4} * 1024 * 1024
+                                         ? available_kb - u64{4} * 1024 * 1024
+                                         : 0;
+                jobs = std::min<size_t>(jobs, std::max<u64>(1, spare_kb / (768 * 1024)));
+                break;
+            }
+            meminfo.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        }
+    }
+#endif
+    return jobs;
+}
+
+/// Whether the driver cache flushes run on their own thread, so that a flush of hundreds of MB does
+/// not hold the payload writes behind it. EDEN_NX2_SEPARATE_FLUSH_THREAD=0 runs them all on the
+/// serialization thread again.
+bool SeparateFlushThread() {
+    static const bool separate = [] {
+        const char* const value = std::getenv("EDEN_NX2_SEPARATE_FLUSH_THREAD");
+        return value == nullptr || std::string_view{value} != "0";
+    }();
+    return separate;
+}
+
+/// Whether the Vulkan pipeline cache of the emulator is kept on a driver that already caches
+/// pipelines on disk. RADV is kept by default; EDEN_NX2_VK_CACHE_RADV_SKIP=1 (test) leaves it to
+/// the Mesa disk cache.
+bool KeepVulkanCacheOnDriverCache(const Device& device) {
+    static const bool radv_skip = [] {
+        const char* const value = std::getenv("EDEN_NX2_VK_CACHE_RADV_SKIP");
+        return value != nullptr && std::string_view{value} == "1";
+    }();
+    return device.GetDriverID() == VK_DRIVER_ID_MESA_RADV && !radv_skip;
 }
 } // Anonymous namespace
 
@@ -887,8 +937,9 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
       use_asynchronous_shaders{Settings::values.use_asynchronous_shaders.GetValue()},
       use_vulkan_pipeline_cache{Settings::values.use_vulkan_driver_pipeline_cache.GetValue() &&
                                 (!device_.DriverCachesPipelines() ||
-                                 device_.GetDriverID() == VK_DRIVER_ID_MESA_RADV)},
-      serialization_thread(1, "VkPipelineSerialization", {}, Common::ThreadPlacement::Background) {
+                                 KeepVulkanCacheOnDriverCache(device_))},
+      serialization_thread(1, "VkPipelineSerialization", {}, Common::ThreadPlacement::Background),
+      flush_thread(1, "VkPipelineFlush", {}, Common::ThreadPlacement::Background) {
     if (Settings::values.use_vulkan_driver_pipeline_cache.GetValue() && !use_vulkan_pipeline_cache) {
         LOG_INFO(Render_Vulkan, "Driver keeps its own pipeline cache, not saving a Vulkan one");
     }
@@ -1278,6 +1329,7 @@ PipelineCache::~PipelineCache() {
     shader_jobs->Shutdown();
     Common::NoteShutdownProgress();
     serialization_thread.WaitForRequests();
+    flush_thread.WaitForRequests();
     Common::NoteShutdownProgress();
     SaveUsedPipelines();
     if (use_vulkan_pipeline_cache && !vulkan_pipeline_cache_filename.empty()) {
@@ -1307,10 +1359,9 @@ void PipelineCache::SaveUsedPipelines() {
     }
     // This session's record, written by the cache's thread; older sessions keep theirs.
     VideoCommon::ShaderCacheV2::UsedRecord record{.session_time = used_session_time};
-    for (const auto& [key, pipeline] : graphics_cache) {
-        if (used_this_session.contains(pipeline.get())) {
-            record.pipelines.push_back(key.Hash());
-        }
+    record.pipelines.reserve(used_this_session.size() + used_and_evicted.size());
+    for (const auto& [pipeline, hash] : used_this_session) {
+        record.pipelines.push_back(hash);
     }
     record.pipelines.insert(record.pipelines.end(), used_and_evicted.begin(),
                             used_and_evicted.end());
@@ -1522,6 +1573,7 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     if (!pipeline_cache_filename.empty()) {
         StopBackgroundJobs();
         serialization_thread.WaitForRequests();
+        flush_thread.WaitForRequests();
         if (use_vulkan_pipeline_cache && !vulkan_pipeline_cache_filename.empty()) {
             SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
                                          CACHE_VERSION);
@@ -1584,7 +1636,18 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         pipeline_cache_filename, [this](size_t count, const std::function<void(size_t)>& task) {
             VideoCommon::ParallelFor(*shader_jobs, count, task);
         }));
-    cache_v2->LoadPrograms(log_v2->parsed.live);
+    // EDEN_NX2_PARALLEL_LOAD_PROGRAMS=0 decodes the Program records in series again.
+    static const bool parallel_load_programs = [] {
+        const char* const value = std::getenv("EDEN_NX2_PARALLEL_LOAD_PROGRAMS");
+        return value == nullptr || std::string_view{value} != "0";
+    }();
+    cache_v2->LoadPrograms(
+        log_v2->parsed.live,
+        parallel_load_programs
+            ? CacheV2::ForEach{[this](size_t count, const std::function<void(size_t)>& task) {
+                  VideoCommon::ParallelFor(*shader_jobs, count, task);
+              }}
+            : CacheV2::ForEach{});
     const CacheV2::LogStats& stats = log_v2->parsed.stats;
     LOG_INFO(Render_Vulkan,
              "Shader cache v2: {} bytes, {} live records, {} superseded, {} tombstones, {} "
@@ -3524,7 +3587,7 @@ void PipelineCache::QueueVulkanPipelineCacheFlush() {
     }
     pipelines_since_flush = 0;
     last_flush = now;
-    serialization_thread.QueueWork([this] {
+    (SeparateFlushThread() ? flush_thread : serialization_thread).QueueWork([this] {
         SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
                                      CACHE_VERSION);
         size_t size = 0;
@@ -3540,8 +3603,8 @@ void PipelineCache::QueueVulkanPipelineCacheSave() {
         return;
     }
     // Not skipped when a timed flush is in flight: that one may have read the cache before the
-    // stage's last builds. The serialization thread runs the two one after the other.
-    serialization_thread.QueueWork([this] {
+    // stage's last builds. The flush thread runs the two one after the other.
+    (SeparateFlushThread() ? flush_thread : serialization_thread).QueueWork([this] {
         SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
                                      CACHE_VERSION);
         size_t size = 0;
@@ -3725,8 +3788,12 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipelineSlowPath() {
         return nullptr;
     }
     constexpr auto save_interval = std::chrono::seconds{15};
-    if (used_this_session.insert(pipeline.get()).second &&
-        std::chrono::steady_clock::now() - used_pipelines_saved > save_interval) {
+    // find first: the key is hashed only when the pipeline is new to the set.
+    const bool first_use = !used_this_session.contains(pipeline.get());
+    if (first_use) {
+        used_this_session.emplace(pipeline.get(), graphics_key.Hash());
+    }
+    if (first_use && std::chrono::steady_clock::now() - used_pipelines_saved > save_interval) {
         SaveUsedPipelines();
     }
     if (current_pipeline) {
@@ -3865,7 +3932,8 @@ void PipelineCache::QueueHeapTrim([[maybe_unused]] const char* reason) {
     // call itself does not run on the GPU thread. TrimHeap does nothing off Linux with glibc, so
     // nothing is queued there.
 #if defined(__linux__) && defined(__GLIBC__)
-    serialization_thread.QueueWork([reason] { Common::TrimHeap(reason); });
+    (SeparateFlushThread() ? flush_thread : serialization_thread)
+        .QueueWork([reason] { Common::TrimHeap(reason); });
 #endif
 }
 
@@ -5144,6 +5212,42 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
             .pInitialData = data};
         return device.GetLogical().CreatePipelineCache(pipeline_cache_ci);
     };
+    // A stamp of the build's SPIR-V emission and the driver, kept in a file beside the cache (the
+    // cache format is unchanged). When it differs and the cache is large, the old entries would
+    // never be hit again and only grow the cache, so it is dropped; a small cache is kept.
+    // EDEN_NX2_VK_CACHE_STAMP=0 turns this off.
+    static const bool use_stamp = [] {
+        const char* const text = std::getenv("EDEN_NX2_VK_CACHE_STAMP");
+        return text == nullptr || text[0] != '0';
+    }();
+    if (use_stamp) {
+        constexpr u64 StampDropSize = u64{512} << 20;
+        const auto uuid = device.GetPipelineCacheUUID();
+        const u64 stamp = VideoCommon::ShaderCacheV2::PrecompiledShaderStamp ^
+                          VideoCommon::ShaderWarm::EmissionStamp() ^
+                          Common::CityHash64(reinterpret_cast<const char*>(uuid.data()),
+                                             uuid.size());
+        auto stamp_path = filename;
+        stamp_path += ".stamp";
+        u64 old_stamp{};
+        bool has_old{};
+        if (std::ifstream in{stamp_path, std::ios::binary}) {
+            has_old = static_cast<bool>(in.read(reinterpret_cast<char*>(&old_stamp),
+                                                sizeof(old_stamp)));
+        }
+        if (!has_old || old_stamp != stamp) {
+            std::error_code stamp_error;
+            const auto size = std::filesystem::file_size(filename, stamp_error);
+            if (has_old && !stamp_error && size > StampDropSize) {
+                LOG_INFO(Render_Vulkan,
+                         "Build stamp of the driver pipeline cache changed, dropping {} MiB",
+                         size >> 20);
+                Common::FS::RemoveFile(filename);
+            }
+            std::ofstream out{stamp_path, std::ios::binary | std::ios::trunc};
+            out.write(reinterpret_cast<const char*>(&stamp), sizeof(stamp));
+        }
+    }
     try {
         std::ifstream file(filename, std::ios::binary | std::ios::ate);
         if (!file.is_open()) {
@@ -5184,14 +5288,48 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
 
         static constexpr size_t header_size = magic_number.size() + sizeof(cache_version);
         const size_t cache_size = static_cast<size_t>(end) - header_size;
-        std::vector<char> cache_data(cache_size);
-        file.read(cache_data.data(), cache_size);
+        std::vector<char> cache_data;
+        const char* cache_ptr{};
+#ifdef __linux__
+        // Mapped read-only instead of copied into a vector the size of the cache; the driver copies
+        // what it needs. The file is only ever replaced by a rename, never truncated in place.
+        // EDEN_NX2_VK_CACHE_MMAP=0 reads it into a vector again.
+        static const bool use_mmap = [] {
+            const char* const text = std::getenv("EDEN_NX2_VK_CACHE_MMAP");
+            return text == nullptr || text[0] != '0';
+        }();
+        struct Mapping {
+            void* base{MAP_FAILED};
+            size_t length{};
+            ~Mapping() {
+                if (base != MAP_FAILED) {
+                    ::munmap(base, length);
+                }
+            }
+        } mapping;
+        if (use_mmap && cache_size != 0) {
+            const int fd = ::open(filename.c_str(), O_RDONLY | O_CLOEXEC);
+            if (fd >= 0) {
+                mapping.base = ::mmap(nullptr, static_cast<size_t>(end), PROT_READ, MAP_PRIVATE, fd, 0);
+                mapping.length = static_cast<size_t>(end);
+                ::close(fd);
+                if (mapping.base != MAP_FAILED) {
+                    cache_ptr = static_cast<const char*>(mapping.base) + header_size;
+                }
+            }
+        }
+#endif
+        if (cache_ptr == nullptr) {
+            cache_data.resize(cache_size);
+            file.read(cache_data.data(), static_cast<std::streamsize>(cache_size));
+            cache_ptr = cache_data.data();
+        }
         {
             // What the file holds now, for the save that skips an unchanged blob
             const std::scoped_lock lock{vulkan_cache_saved_mutex};
             vulkan_cache_saved_size = cache_size;
             vulkan_cache_saved_hash =
-                cache_size != 0 ? Common::CityHash64(cache_data.data(), cache_size) : 0;
+                cache_size != 0 ? Common::CityHash64(cache_ptr, cache_size) : 0;
             vulkan_cache_saved_valid = cache_size != 0;
         }
 
@@ -5199,7 +5337,7 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
                  "Loaded Vulkan driver pipeline cache: {}", Common::FS::PathToUTF8String(filename));
 
         try {
-            auto cache = create_pipeline_cache(cache_size, cache_data.data());
+            auto cache = create_pipeline_cache(cache_size, cache_ptr);
             vulkan_pipeline_cache_loaded = cache_size > sizeof(VkPipelineCacheHeaderVersionOne);
             return cache;
         } catch (const vk::Exception& e) {

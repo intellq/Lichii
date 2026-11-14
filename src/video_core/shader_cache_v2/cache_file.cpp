@@ -73,31 +73,6 @@ u64 FileSize(const std::filesystem::path& file) {
     return error ? 0 : static_cast<u64>(size);
 }
 
-/// Writes `bytes` to a temporary file, commits it to the disk and renames it over `file`
-WriteResult ReplaceFile(const std::filesystem::path& file, std::span<const u8> bytes) {
-    auto temporary = file;
-    temporary += ".tmp";
-    bool written{};
-    {
-        const IOFile target{temporary, FileAccessMode::Write, FileType::BinaryFile,
-                            FileShareFlag::ShareReadWrite};
-        // The rename can reach the disk before the data: commit the data first.
-        written = target.IsOpen() && target.WriteSpan(bytes) == bytes.size() && target.Commit();
-    }
-    std::error_code error;
-    if (written) {
-        std::filesystem::rename(temporary, file, error);
-        if (!error) {
-            return WriteResult::Written;
-        }
-    }
-    LOG_ERROR(Common_Filesystem, "Failed to write shader cache {}: {}",
-              Common::FS::PathToUTF8String(file),
-              error ? error.message() : "the new file can't be written");
-    std::filesystem::remove(temporary, error);
-    return WriteResult::Failed;
-}
-
 } // Anonymous namespace
 
 u64 UnixNow() {
@@ -257,10 +232,47 @@ WriteResult CompactLog(const std::filesystem::path& file, const CompactLimit& li
         kept.resize(count);
         std::ranges::sort(kept, {}, &LogRecord::offset);
     }
-    for (const LogRecord* record : kept) {
-        EncodeRecord(bytes, record->kind, record->key, record->payload, record->flags);
+    // Stream the kept records to the temporary file in chunks: the output is never held whole next
+    // to the log that was read, which halves the peak memory of a compaction.
+    auto temporary = file;
+    temporary += ".tmp";
+    bool written{};
+    {
+        const IOFile target{temporary, FileAccessMode::Write, FileType::BinaryFile,
+                            FileShareFlag::ShareReadWrite};
+        written = target.IsOpen();
+        bytes.reserve(WriteChunk + WriteChunk / 4);
+        const auto flush = [&] {
+            written = written && target.WriteSpan(std::span<const u8>{bytes}) == bytes.size();
+            bytes.clear();
+        };
+        for (const LogRecord* record : kept) {
+            if (!written) {
+                break;
+            }
+            EncodeRecord(bytes, record->kind, record->key, record->payload, record->flags);
+            if (bytes.size() >= WriteChunk) {
+                flush();
+            }
+        }
+        if (written && !bytes.empty()) {
+            flush();
+        }
+        // The rename can reach the disk before the data: commit the data first.
+        written = written && target.Commit();
     }
-    return ReplaceFile(file, bytes);
+    std::error_code error;
+    if (written) {
+        std::filesystem::rename(temporary, file, error);
+        if (!error) {
+            return WriteResult::Written;
+        }
+    }
+    LOG_ERROR(Common_Filesystem, "Failed to write shader cache {}: {}",
+              Common::FS::PathToUTF8String(file),
+              error ? error.message() : "the new file can't be written");
+    std::filesystem::remove(temporary, error);
+    return WriteResult::Failed;
 }
 
 // Out of line so that a caller does not need the complete type of the lock it holds

@@ -58,7 +58,8 @@ public:
     /// Takes the Program records of the log read at boot: the ones of this build's lowering are
     /// looked up from then on (FindProgram), and all are noted (AddProgram). Called once, while
     /// FindProgram may already run on another thread.
-    void LoadPrograms(std::span<const LogRecord> live);
+    /// With `for_each`, the records are decoded in parallel and inserted in log order.
+    void LoadPrograms(std::span<const LogRecord> live, const ForEach& for_each = {});
 
     /// The record of the program these inputs describe, if LoadPrograms took one of this build's
     /// lowering. Without locks or allocations on a hit; safe beside the writer thread.

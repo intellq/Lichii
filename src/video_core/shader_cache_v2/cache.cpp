@@ -65,28 +65,58 @@ void Cache::AddProgram(u64 key, u64 lowering_stamp) {
     programs.insert_or_assign(key, lowering_stamp);
 }
 
-void Cache::LoadPrograms(std::span<const LogRecord> live) {
+void Cache::LoadPrograms(std::span<const LogRecord> live, const ForEach& for_each) {
     ASSERT(!loaded_ready.load(std::memory_order_relaxed));
     std::unordered_map<u64, LoadedProgram> table;
-    for (const LogRecord& entry : live) {
+    // The slow part (copying the vectors, hashing the native code) runs per record on any thread;
+    // the tables are filled in order afterwards, as the serial path does.
+    struct Decoded {
+        u64 stamp{};
+        std::optional<LoadedProgram> program;
+        bool valid{};
+    };
+    const auto decode = [](const LogRecord& entry, Decoded& out) {
         if (entry.kind != RecordKind::Program) {
-            continue;
+            return;
         }
         const std::optional<u64> stamp = ProgramStamp(entry.payload);
         if (!stamp) {
-            continue;
+            return;
         }
-        AddProgram(entry.key, *stamp);
+        out.valid = true;
+        out.stamp = *stamp;
         if (*stamp != LoweringStamp()) {
-            continue;
+            return;
         }
         std::optional<ProgramRecord> record = DecodeProgram(entry.payload);
         // A record under another key than its inputs make would never be found
         if (!record || ProgramKey(*record) != entry.key) {
-            continue;
+            return;
         }
         std::shared_ptr<const LoweredNativeCode> code = TakeProgramCode(*record);
-        table.insert_or_assign(entry.key, LoadedProgram{std::move(*record), std::move(code)});
+        out.program = LoadedProgram{std::move(*record), std::move(code)};
+    };
+    const auto merge = [&](const LogRecord& entry, Decoded& out) {
+        if (!out.valid) {
+            return;
+        }
+        AddProgram(entry.key, out.stamp);
+        if (out.program) {
+            table.insert_or_assign(entry.key, std::move(*out.program));
+        }
+    };
+    if (for_each && live.size() > 1) {
+        std::vector<Decoded> decoded(live.size());
+        for_each(live.size(), [&](size_t index) { decode(live[index], decoded[index]); });
+        for (size_t index = 0; index < live.size(); ++index) {
+            merge(live[index], decoded[index]);
+        }
+    } else {
+        for (const LogRecord& entry : live) {
+            Decoded out;
+            decode(entry, out);
+            merge(entry, out);
+        }
     }
     loaded = std::move(table);
     loaded_ready.store(true, std::memory_order_release);

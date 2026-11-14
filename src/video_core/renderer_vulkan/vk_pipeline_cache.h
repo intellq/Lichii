@@ -485,7 +485,8 @@ private:
     u64 vulkan_cache_saved_hash{};
     bool vulkan_cache_saved_valid{};
     std::unordered_map<u64, u8> used_pipelines; ///< Key hash -> sessions since it was last used
-    std::unordered_set<const GraphicsPipeline*> used_this_session;
+    /// Pipeline -> key hash, taken once when first used so a save does not hash the cache again.
+    std::unordered_map<const GraphicsPipeline*, u64> used_this_session;
     std::chrono::steady_clock::time_point used_pipelines_saved{};
     void SaveUsedPipelines();
 
@@ -507,6 +508,8 @@ private:
     /// and lichii_cmd load with a stop token that never stops
     std::stop_source serialization_stop;
     Common::ThreadWorker serialization_thread;
+    /// Driver cache flushes and heap trims, apart from the payload writes of serialization_thread
+    Common::ThreadWorker flush_thread;
     DynamicFeatures dynamic_features;
 };
 
