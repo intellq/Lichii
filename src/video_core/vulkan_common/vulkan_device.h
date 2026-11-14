@@ -7,6 +7,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <mutex>
 #include <optional>
@@ -1110,7 +1111,11 @@ FN_MAX_LIMIT_LIST
         return extensions.memory_budget;
     }
 
+    /// Cached for ~4 ms (steady_clock), thread safe.
     u64 GetDeviceMemoryUsage() const;
+
+    /// Always queries the driver; use right after freeing memory when a fresh value is needed.
+    u64 GetDeviceMemoryUsageFresh() const;
 
     /// The driver's current memory budget for this process (VK_EXT_memory_budget), in
     /// GetDeviceMemoryUsage() terms: the usage at which the main device-local heap reaches its
@@ -1448,6 +1453,10 @@ private:
     bool streamline_attached{};   ///< Streamline has this device.
     std::vector<size_t> valid_heap_memory;                   ///< Heaps used.
     size_t main_heap{};       ///< Largest device-local heap, where images live.
+    mutable std::mutex memory_usage_mutex;
+    mutable std::chrono::steady_clock::time_point memory_usage_time{};
+    mutable u64 memory_usage_cached{};
+    mutable bool memory_usage_valid{};
     u64 heap_size_limit{};    ///< EDEN_NX2_VRAM_LIMIT_MIB for device-local heaps, 0 if unset.
     u64 main_heap_size{};     ///< Size of main_heap, with heap_size_limit applied.
 

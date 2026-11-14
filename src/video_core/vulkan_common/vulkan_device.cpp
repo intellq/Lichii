@@ -1143,18 +1143,29 @@ void Device::SaveStaticPipelineCache() const {
     }
     data.resize(size);
     static_pipeline_cache.Read(&size, data.data());
+    // Write to a temporary file and rename it over the cache, so a crash or a full disk
+    // can't leave a truncated cache behind.
+    std::filesystem::path tmp_filename = filename;
+    tmp_filename += ".tmp";
     try {
-        std::ofstream file(filename, std::ios::binary | std::ios::trunc);
-        file.exceptions(std::ofstream::failbit);
-        if (!file.is_open()) {
-            return;
+        {
+            std::ofstream file(tmp_filename, std::ios::binary | std::ios::trunc);
+            file.exceptions(std::ofstream::failbit);
+            if (!file.is_open()) {
+                return;
+            }
+            file.write(STATIC_CACHE_MAGIC_NUMBER.data(), STATIC_CACHE_MAGIC_NUMBER.size())
+                .write(reinterpret_cast<const char*>(&STATIC_CACHE_VERSION),
+                       sizeof(STATIC_CACHE_VERSION))
+                .write(data.data(), static_cast<std::streamsize>(size));
         }
-        file.write(STATIC_CACHE_MAGIC_NUMBER.data(), STATIC_CACHE_MAGIC_NUMBER.size())
-            .write(reinterpret_cast<const char*>(&STATIC_CACHE_VERSION),
-                   sizeof(STATIC_CACHE_VERSION))
-            .write(data.data(), static_cast<std::streamsize>(size));
+        std::error_code ec;
+        std::filesystem::rename(tmp_filename, filename, ec);
+        if (ec) {
+            Common::FS::RemoveFile(tmp_filename);
+        }
     } catch (const std::ios_base::failure& e) {
-        Common::FS::RemoveFile(filename);
+        Common::FS::RemoveFile(tmp_filename);
     }
 }
 
@@ -2224,6 +2235,21 @@ void Device::ReleaseCustomBorderColorSamplers(size_t count) const {
 }
 
 u64 Device::GetDeviceMemoryUsage() const {
+    // The texture and buffer caches both read this once per frame; the second read reuses the
+    // first (each real read asks the driver). Callers needing a fresh value use ...Fresh().
+    constexpr auto USAGE_CACHE_TTL = std::chrono::milliseconds{4};
+    const auto now = std::chrono::steady_clock::now();
+    std::scoped_lock lock{memory_usage_mutex};
+    if (memory_usage_valid && now - memory_usage_time < USAGE_CACHE_TTL) {
+        return memory_usage_cached;
+    }
+    memory_usage_cached = GetDeviceMemoryUsageFresh();
+    memory_usage_time = std::chrono::steady_clock::now();
+    memory_usage_valid = true;
+    return memory_usage_cached;
+}
+
+u64 Device::GetDeviceMemoryUsageFresh() const {
     VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};
     budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
     physical.GetMemoryProperties(&budget);

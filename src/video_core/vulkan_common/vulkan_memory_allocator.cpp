@@ -584,8 +584,28 @@ vk::Buffer MemoryAllocator::CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsa
     VmaAllocation allocation{};
     VkMemoryPropertyFlags property_flags{};
 
-    vk::Check(vmaCreateBufferWithAlignment(allocator, &ci, &alloc_ci, min_alignment, &handle,
-                                           &allocation, &alloc_info));
+    VkResult result = vmaCreateBufferWithAlignment(allocator, &ci, &alloc_ci, min_alignment,
+                                                   &handle, &allocation, &alloc_info);
+    if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) {
+        // Over the memory budget: same fallback as the overload without alignment, as the
+        // vk::Exception would abort the process from the GPU thread.
+        static u32 logged_aligned{};
+        if (logged_aligned++ < 32) {
+            LOG_WARNING(Render_Vulkan,
+                        "Buffer of {} bytes (usage {}) is over the memory budget; "
+                        "allocating it anyway",
+                        ci.size, static_cast<u32>(usage));
+        }
+        if (device.IsIntegrated() || usage == MemoryUsage::DeviceLocal ||
+            usage == MemoryUsage::Stream) {
+            pressure_events.fetch_add(1, std::memory_order_relaxed);
+        }
+        VmaAllocationCreateInfo relaxed = alloc_ci;
+        relaxed.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+        result = vmaCreateBufferWithAlignment(allocator, &ci, &relaxed, min_alignment, &handle,
+                                              &allocation, &alloc_info);
+    }
+    vk::Check(result);
     vmaGetAllocationMemoryProperties(allocator, allocation, &property_flags);
     if (usage == MemoryUsage::DeviceLocal) {
         NoteHostPlacement(allocation, alloc_info.size, false);
