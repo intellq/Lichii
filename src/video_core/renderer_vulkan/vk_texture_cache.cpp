@@ -4962,16 +4962,25 @@ void CustomBorderColorBudget::Release() noexcept {
 
 namespace {
 /// The bias for the output FSR writes at (Settings ocarina_fsr_output), from the size on screen
-/// when the game starts; resizing the window later keeps it.
+/// when the game starts (resizing the window later keeps it), over the scene the applied
+/// render-scale patch leaves (2560x1440 unpatched, less with ocarina_fsr_render or DLSS).
 f32 OcarinaOutputLodBias(VideoCommon::OcarinaUpscaleBackend backend) {
     const auto choice = static_cast<unsigned>(Settings::values.ocarina_fsr_output.GetValue());
     const auto output =
         VideoCommon::OcarinaFsrOutputExtent(choice, VideoCommon::OcarinaScreenExtent());
-    if (output == VideoCommon::OcarinaExtent{3840, 2160}) {
+    f32 render_height = 1440.0f;
+    if (const auto scale = Settings::AppliedOcarinaRenderScale()) {
+        using Quality = Settings::NvidiaDlssQuality;
+        render_height = *scale == Quality::Balanced           ? 1280.0f
+                        : *scale == Quality::Performance      ? 1080.0f
+                        : *scale == Quality::UltraPerformance ? 720.0f
+                                                              : 1440.0f;
+    }
+    if (render_height == 1440.0f && output == VideoCommon::OcarinaExtent{3840, 2160}) {
         return VideoCommon::OcarinaFsrLodBias(backend);
     }
-    const f32 area = static_cast<f32>(output.width) * static_cast<f32>(output.height) /
-                     (2560.0f * 1440.0f);
+    const f32 render_area = render_height * render_height * 16.0f / 9.0f;
+    const f32 area = static_cast<f32>(output.width) * static_cast<f32>(output.height) / render_area;
     return VideoCommon::OcarinaFsrLodBias(backend, area);
 }
 } // Anonymous namespace

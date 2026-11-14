@@ -269,6 +269,11 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "them, or if FSR 4 can't run, FSR 3.1 is used.\nFSR 3.1: works on any supported "
               "Vulkan GPU.\nTakes effect when a game starts."));
 #endif
+    INSERT(Settings, ocarina_fsr_render, tr("Ocarina of Time FSR render resolution:"),
+           tr("The resolution Ocarina of Time renders at while FSR upscales it (docked, with the "
+              "Max Resolution add-on). 1080p and 720p lower the game's render resolution from "
+              "2560x1440 and leave FSR more to reconstruct, for more speed on slower GPUs. NVIDIA "
+              "DLSS uses its own quality setting instead. Takes effect when a game starts."));
     INSERT(Settings, ocarina_fsr_output, tr("Ocarina of Time FSR output:"),
            tr("Size FSR writes Ocarina of Time's scene at before the game's HUD goes over it.\n"
               "3840x2160: as before; the window then scales the 4K image to its size.\n"
@@ -696,6 +701,10 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(SpirvOptimizeMode, OnLoad, tr("On Load")),
                               PAIR(SpirvOptimizeMode, Always, tr("Always")),
                           }});
+    translations->insert({Settings::EnumMetadata<Settings::OcarinaFsrRender>::Index(),
+                          {PAIR(OcarinaFsrRender, Render1440p, tr("2560x1440 (game's maximum)")),
+                           PAIR(OcarinaFsrRender, Render1080p, tr("1920x1080")),
+                           PAIR(OcarinaFsrRender, Render720p, tr("1280x720"))}});
     translations->insert({Settings::EnumMetadata<Settings::NvidiaDlssQuality>::Index(),
                           {PAIR(NvidiaDlssQuality, Automatic, tr("Automatic (game resolution)")),
                            PAIR(NvidiaDlssQuality, Native, tr("Native (DLAA)")),
