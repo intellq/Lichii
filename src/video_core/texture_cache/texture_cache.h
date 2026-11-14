@@ -230,14 +230,17 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
     u32 pass_deferred = 0;
     u64 pass_download_bytes = 0;
     std::chrono::steady_clock::duration pass_download_time{};
-    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
-                          &evict_old_costly, &pass_downloads, &pass_deferred,
+    // Images Cleanup skips (decoding, costly, put off) do not spend num_iterations, so the clean
+    // ones behind them still get their turn; this caps the images visited per sequence instead.
+    size_t visits_left = 0;
+    const auto Cleanup = [this, &num_iterations, &visits_left, &high_priority_mode,
+                          &aggressive_mode, &evict_old_costly, &pass_downloads, &pass_deferred,
                           &pass_download_bytes, &pass_download_time,
                           out_of_memory](ImageId image_id) {
-        if (num_iterations == 0) {
+        if (num_iterations == 0 || visits_left == 0) {
             return true;
         }
-        --num_iterations;
+        --visits_left;
         auto& image = slot_images[image_id];
         if (True(image.flags & ImageFlagBits::IsDecoding)) {
             return false;
@@ -260,6 +263,7 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
             ++pass_deferred;
             return false;
         }
+        --num_iterations; // only images deleted spend the budget
         if (must_download) {
             gc_waited_frame = frame_tick;
             const auto download_start = std::chrono::steady_clock::now();
@@ -311,6 +315,7 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
             return;
         }
         const u64 last_tick = frame_tick - ticks_to_destroy;
+        visits_left = num_iterations * 8;
         if constexpr (requires(const Image& image) { image.MemoryBlock(); }) {
             std::vector<ImageId> candidates;
             const size_t limit = num_iterations * 8;
@@ -396,6 +401,7 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
     }();
     if (high_priority_mode && old_age != 0 && frame_tick > old_age) {
         evict_old_costly = true;
+        visits_left = num_iterations * 8;
         lru_cache.ForEachItemBelow(frame_tick - old_age, Cleanup);
         evict_old_costly = false;
     }
@@ -1864,7 +1870,34 @@ FramebufferId TextureCache<P>::GetFramebufferId(const RenderTargets& key) {
     ImageView* const depth_buffer = key.depth_buffer_id ? &slot_image_views[key.depth_buffer_id] : nullptr;
     runtime.FlushDeferredClear();
     framebuffer_id = slot_framebuffers.insert(runtime, color_buffers, depth_buffer, key);
+    // The only place a framebuffer enters the map: index it by its views for RemoveFramebuffers.
+    framebuffer_keys.emplace(framebuffer_id, key);
+    const auto index_view = [&](ImageViewId view_id) {
+        if (view_id) {
+            framebuffers_by_view[view_id].push_back(framebuffer_id);
+        }
+    };
+    std::ranges::for_each(key.color_buffer_ids, index_view);
+    index_view(key.depth_buffer_id);
     return framebuffer_id;
+}
+
+template <class P>
+void TextureCache<P>::UnindexFramebuffer(FramebufferId framebuffer_id, const RenderTargets& key) {
+    const auto unindex_view = [&](ImageViewId view_id) {
+        const auto it = framebuffers_by_view.find(view_id);
+        if (it == framebuffers_by_view.end()) {
+            return;
+        }
+        it->second.erase(std::remove(it->second.begin(), it->second.end(), framebuffer_id),
+                         it->second.end());
+        if (it->second.empty()) {
+            framebuffers_by_view.erase(it);
+        }
+    };
+    std::ranges::for_each(key.color_buffer_ids, unindex_view);
+    unindex_view(key.depth_buffer_id);
+    framebuffer_keys.erase(framebuffer_id);
 }
 
 template <class P>
@@ -5169,21 +5202,31 @@ void TextureCache<P>::RemoveImageViewReferences(std::span<const ImageViewId> rem
 template <class P>
 void TextureCache<P>::RemoveFramebuffers(std::span<const ImageViewId> removed_views) {
     runtime.FlushDeferredClear();
-    auto it = framebuffers.begin();
-    while (it != framebuffers.end()) {
-        if (it->first.Contains(removed_views)) {
-            auto framebuffer_id = it->second;
-            ASSERT(framebuffer_id);
-            if (framebuffer_id == last_framebuffer_id) {
-                last_framebuffer_id = {};
-                last_framebuffer_serial = 0;
+    // Collect first: unindexing edits the lists being read.
+    boost::container::small_vector<FramebufferId, 16> doomed;
+    for (const ImageViewId view_id : removed_views) {
+        if (const auto it = framebuffers_by_view.find(view_id); it != framebuffers_by_view.end()) {
+            for (const FramebufferId framebuffer_id : it->second) {
+                if (std::ranges::find(doomed, framebuffer_id) == doomed.end()) {
+                    doomed.push_back(framebuffer_id);
+                }
             }
-            sentenced_framebuffers.Push(std::move(slot_framebuffers[framebuffer_id]));
-            slot_framebuffers.erase(framebuffer_id);
-            it = framebuffers.erase(it);
-        } else {
-            ++it;
         }
+    }
+    for (const FramebufferId framebuffer_id : doomed) {
+        ASSERT(framebuffer_id);
+        const auto key_it = framebuffer_keys.find(framebuffer_id);
+        ASSERT(key_it != framebuffer_keys.end());
+        // Copied: UnindexFramebuffer erases the entry it was read from.
+        const RenderTargets key = key_it->second;
+        if (framebuffer_id == last_framebuffer_id) {
+            last_framebuffer_id = {};
+            last_framebuffer_serial = 0;
+        }
+        sentenced_framebuffers.Push(std::move(slot_framebuffers[framebuffer_id]));
+        slot_framebuffers.erase(framebuffer_id);
+        framebuffers.erase(key);
+        UnindexFramebuffer(framebuffer_id, key);
     }
 }
 
