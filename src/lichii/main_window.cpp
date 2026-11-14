@@ -1084,6 +1084,7 @@ void MainWindow::InitializeWidgets() {
 
     volume_button = new VolumeButton();
     volume_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
+    volume_button->setProperty("chip", QStringLiteral("volume"));
     volume_button->setFocusPolicy(Qt::NoFocus);
     volume_button->setCheckable(true);
     UpdateVolumeUI();
@@ -1125,6 +1126,7 @@ void MainWindow::InitializeWidgets() {
 
     frame_gen_status_button = new QPushButton();
     frame_gen_status_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
+    frame_gen_status_button->setProperty("chip", QStringLiteral("fg"));
     frame_gen_status_button->setFocusPolicy(Qt::NoFocus);
     frame_gen_status_button->setCheckable(true);
     connect(frame_gen_status_button, &QPushButton::clicked, this, [this] {
@@ -1180,6 +1182,7 @@ void MainWindow::InitializeWidgets() {
 #ifdef HAS_RESHADE
     post_shader_status_button = new QPushButton();
     post_shader_status_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
+    post_shader_status_button->setProperty("chip", QStringLiteral("fx"));
     post_shader_status_button->setFocusPolicy(Qt::NoFocus);
     post_shader_status_button->setCheckable(true);
     connect(post_shader_status_button, &QPushButton::clicked, this, [this] {
@@ -1215,6 +1218,7 @@ void MainWindow::InitializeWidgets() {
     // setup AA button
     aa_status_button = new QPushButton();
     aa_status_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
+    aa_status_button->setProperty("chip", QStringLiteral("aa"));
     aa_status_button->setFocusPolicy(Qt::NoFocus);
     connect(aa_status_button, &QPushButton::clicked, [&] {
         auto aa_mode = Settings::values.anti_aliasing.GetValue();
@@ -1248,6 +1252,7 @@ void MainWindow::InitializeWidgets() {
     // Setup Filter button
     filter_status_button = new QPushButton();
     filter_status_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
+    filter_status_button->setProperty("chip", QStringLiteral("filter"));
     filter_status_button->setFocusPolicy(Qt::NoFocus);
     connect(filter_status_button, &QPushButton::clicked, this, &MainWindow::OnToggleAdaptingFilter);
     UpdateFilterText();
@@ -1273,6 +1278,7 @@ void MainWindow::InitializeWidgets() {
     // Setup Dock button
     dock_status_button = new QPushButton();
     dock_status_button->setObjectName(QStringLiteral("DockingStatusBarButton"));
+    dock_status_button->setProperty("chip", QStringLiteral("dock"));
     dock_status_button->setFocusPolicy(Qt::NoFocus);
     connect(dock_status_button, &QPushButton::clicked, this, &MainWindow::OnToggleDockedMode);
     dock_status_button->setCheckable(true);
@@ -1299,6 +1305,7 @@ void MainWindow::InitializeWidgets() {
     // Setup GPU Accuracy button
     gpu_accuracy_button = new QPushButton();
     gpu_accuracy_button->setObjectName(QStringLiteral("GPUStatusBarButton"));
+    gpu_accuracy_button->setProperty("chip", QStringLiteral("gpu"));
     gpu_accuracy_button->setCheckable(true);
     gpu_accuracy_button->setFocusPolicy(Qt::NoFocus);
     connect(gpu_accuracy_button, &QPushButton::clicked, this, &MainWindow::OnToggleGpuAccuracy);

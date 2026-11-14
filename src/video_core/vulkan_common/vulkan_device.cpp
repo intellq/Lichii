@@ -1749,6 +1749,18 @@ bool Device::GetSuitability(bool requires_swapchain) {
 }
 
 void Device::RemoveUnsuitableExtensions() {
+    // VK_EXT_image_compression_control: only to create colour images without DCC on RADV before
+    // GFX10 (wave64 only). There DCC is never compressed in the GENERAL layout Lichii keeps its
+    // images in, and each copy's TRANSFER_SRC/DST -> GENERAL transition decompresses the whole
+    // image. RADV_DEBUG=nodcc: 9.5 -> 21 fps in Ocarina of Time's Kokiri Forest on an RX 580.
+    extensions.image_compression_control =
+        features.image_compression_control.imageCompressionControl &&
+        properties.driver.driverID == VK_DRIVER_ID_MESA_RADV &&
+        properties.subgroup_size_control.minSubgroupSize == 64;
+    RemoveExtensionFeatureIfUnsuitable(extensions.image_compression_control,
+                                       features.image_compression_control,
+                                       VK_EXT_IMAGE_COMPRESSION_CONTROL_EXTENSION_NAME);
+
     // VK_EXT_color_write_enable
     extensions.color_write_enable = features.color_write_enable.colorWriteEnable;
     RemoveExtensionFeatureIfUnsuitable(extensions.color_write_enable, features.color_write_enable,
@@ -2021,7 +2033,21 @@ void Device::RemoveUnsuitableExtensions() {
                      "VK_KHR_cooperative_matrix is emulated on this AMD GPU: guest tensor "
                      "operations stay in shader emulation");
         }
+        // NVIDIA's compiler miscompiles some cooperative matrix shaders on Turing only, a bug
+        // NVIDIA confirmed without a workaround (llama.cpp#19290 keeps its coopmat1 flash
+        // attention off Turing for it). Ocarina of Time's anti-aliasing network then shows green
+        // and red speckles (#1102). The self-test passes there, so it cannot catch this.
+        const bool turing_matrices = extensions.cooperative_matrix &&
+                                     driver_id == VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
+                                     GetNvidiaArchitecture(physical, supported_extensions) ==
+                                         NvidiaArchitecture::Arch_Turing;
+        if (turing_matrices) {
+            LOG_INFO(Render_Vulkan,
+                     "VK_KHR_cooperative_matrix is miscompiled on Turing: guest tensor operations "
+                     "stay in shader emulation");
+        }
         const bool usable = extensions.cooperative_matrix && !emulated_amd_matrices &&
+                            !turing_matrices &&
                             features.cooperative_matrix.cooperativeMatrix &&
                             (properties.cooperative_matrix.cooperativeMatrixSupportedStages &
                              VK_SHADER_STAGE_COMPUTE_BIT) != 0 &&
