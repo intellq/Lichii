@@ -630,6 +630,9 @@ private:
     /// Copies a GPU-written image back to guest memory and waits for it.
     void WriteBackImage(Image& image);
 
+    /// WriteBackImage for several images with one wait for the GPU, swizzled in the given order.
+    void WriteBackImages(std::span<const ImageId> images);
+
     void RefreshContents(Image& image, ImageId image_id);
 
     /// Upload data from guest to an image
@@ -820,6 +823,12 @@ private:
     /// unless EDEN_NX2_TC_COLD_GUARDED=1 of a shape guarded as sampled or rendered to without a
     /// clear in a later frame. JoinImages puts the chain members it sees on the watch list.
     void WatchColdImage(ImageId image_id);
+    /// Images that were linked as overlaps (overlapping_images filled), so the superseded and bad
+    /// overlap passes visit them instead of the whole LRU. Stale entries leave when visited.
+    void WatchOverlap(ImageId image_id);
+    std::vector<ImageId> overlap_watch;
+    ::Common::unordered_set<ImageId> overlap_watch_set;
+    size_t overlap_watch_cursor{};
     void SweepColdImages();
     std::vector<std::pair<ImageId, u64>> cold_watch; ///< Image, frame_tick it was put on
     ::Common::unordered_set<ImageId> cold_watch_set;

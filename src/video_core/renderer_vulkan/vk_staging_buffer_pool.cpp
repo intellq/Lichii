@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <algorithm>
+#include <cstdlib>
 #include <utility>
 #include <vector>
 
@@ -308,7 +309,14 @@ void StagingBufferPool::ReleaseLevel(StagingBuffersCache& cache, size_t log2) {
     // RTX 4080, idle system: 0.4 ms to create, 1.2 ms more for the first write).
     constexpr size_t KeepMaxLog2 = 25;
     constexpr size_t KeepPerLevel = 2;
-    if (&cache == &upload_cache && log2 <= KeepMaxLog2) {
+    // Downloads (write-backs, readbacks) get the same rule, in host memory.
+    // EDEN_NX2_KEEP_DOWNLOAD=0 sweeps them like before.
+    static const bool keep_download = [] {
+        const char* value = std::getenv("EDEN_NX2_KEEP_DOWNLOAD");
+        return value == nullptr || value[0] != '0';
+    }();
+    if ((&cache == &upload_cache || (keep_download && &cache == &download_cache)) &&
+        log2 <= KeepMaxLog2) {
         size_t idle = 0;
         std::erase_if(entries, [this, &idle](const StagingBuffer& entry) {
             return scheduler.IsFree(entry.tick) && ++idle > KeepPerLevel;

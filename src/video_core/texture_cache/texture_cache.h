@@ -141,6 +141,23 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
     }
 }
 
+/// EDEN_NX2_OVERLAP_WATCH=0 goes back to scanning the whole LRU in DeleteSupersededImages and
+/// the bad overlap pass of the collector (on otherwise).
+inline bool OverlapWatchEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("EDEN_NX2_OVERLAP_WATCH");
+        return value == nullptr || value[0] != '0';
+    }();
+    return enabled;
+}
+
+template <class P>
+void TextureCache<P>::WatchOverlap(ImageId image_id) {
+    if (OverlapWatchEnabled() && overlap_watch_set.insert(image_id).second) {
+        overlap_watch.push_back(image_id);
+    }
+}
+
 template <class P>
 void TextureCache<P>::DeleteSupersededImages() {
     // Ocarina of Time moves its render targets within a memory pool every frame while the camera
@@ -153,7 +170,7 @@ void TextureCache<P>::DeleteSupersededImages() {
         return;
     }
     superseded_ids.clear();
-    lru_cache.ForEachItemBelow(frame_tick - MinFramesUnused, [this](ImageId image_id) {
+    const auto classify = [this](ImageId image_id) {
         const Image& image = slot_images[image_id];
         if (image.overlapping_images.empty()) {
             return false;
@@ -170,7 +187,32 @@ void TextureCache<P>::DeleteSupersededImages() {
             break;
         }
         return false;
-    });
+    };
+    if (OverlapWatchEnabled()) {
+        // Only images that were linked as overlaps (overlap_watch) can be superseded, so scan
+        // those instead of every image in the LRU.
+        const u64 last_tick = frame_tick - MinFramesUnused;
+        size_t index = 0;
+        while (index < overlap_watch.size()) {
+            const ImageId image_id = overlap_watch[index];
+            if (!slot_images.contains(image_id) ||
+                slot_images[image_id].overlapping_images.empty()) {
+                overlap_watch_set.erase(image_id);
+                overlap_watch[index] = overlap_watch.back();
+                overlap_watch.pop_back();
+                continue;
+            }
+            ++index;
+            const Image& image = slot_images[image_id];
+            if (False(image.flags & ImageFlagBits::Registered) ||
+                lru_cache.Tick(image.lru_index) > last_tick) {
+                continue;
+            }
+            classify(image_id);
+        }
+    } else {
+        lru_cache.ForEachItemBelow(frame_tick - MinFramesUnused, classify);
+    }
     for (const ImageId image_id : superseded_ids) {
         Image& image = slot_images[image_id];
         ++(image.IsSafeGpuCopy() ? superseded_rewritten_deletes : superseded_clean_deletes);
@@ -271,16 +313,30 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory, bool burst_write_b
             gc_waited_frame = frame_tick;
             const auto download_start = std::chrono::steady_clock::now();
             pass_download_bytes += ImageAllocationBytes(image);
-            WriteBackImage(image);
             // An image that overlaps others badly shares memory with them. Dropped without a
             // write-back, the next image made over that memory loads whatever an older image left
             // there: The Duskbloods' HUD layer came back as its character portraits. The overlaps
             // drawn after it are written back again over it, oldest first, so each part of the
             // memory ends with its newest data.
+            // EDEN_NX2_WB_BATCH=0 waits for the GPU once per image instead of once for all.
+            static const bool batch_write_backs = [] {
+                const char* value = std::getenv("EDEN_NX2_WB_BATCH");
+                return value == nullptr || value[0] != '0';
+            }();
             if (True(image.flags & ImageFlagBits::BadOverlap)) {
-                for (const ImageId overlap_id : NewerGpuOverlaps(image)) {
-                    WriteBackImage(slot_images[overlap_id]);
+                const auto overlaps = NewerGpuOverlaps(image);
+                if (batch_write_backs) {
+                    boost::container::small_vector<ImageId, 8> batch{image_id};
+                    batch.insert(batch.end(), overlaps.begin(), overlaps.end());
+                    WriteBackImages(batch);
+                } else {
+                    WriteBackImage(image);
+                    for (const ImageId overlap_id : overlaps) {
+                        WriteBackImage(slot_images[overlap_id]);
+                    }
                 }
+            } else {
+                WriteBackImage(image);
             }
             ++gc_download_deletes;
             ++pass_downloads;
@@ -369,10 +425,7 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory, bool burst_write_b
     // the age-based pass below frees.
     if (const u64 bad_overlap_age = (std::max)(u64{4}, min_age); frame_tick > bad_overlap_age) {
         size_t visits = 512;
-        lru_cache.ForEachItemBelow(frame_tick - bad_overlap_age, [&](ImageId image_id) {
-            if (visits-- == 0) {
-                return true;
-            }
+        const auto visit_bad_overlap = [&](ImageId image_id) {
             auto& image = slot_images[image_id];
             if (False(image.flags & ImageFlagBits::BadOverlap) ||
                 True(image.flags & ImageFlagBits::IsDecoding)) {
@@ -395,7 +448,41 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory, bool burst_write_b
             UnregisterImage(image_id);
             DeleteImage(image_id, image.scale_tick > frame_tick + 5);
             return false;
-        });
+        };
+        if (OverlapWatchEnabled()) {
+            // The LRU walk spent its 512 visits on the oldest images whatever they were and
+            // never reached the drifting render targets; visit only the watched ones, resuming
+            // where the last pass stopped.
+            const u64 last_tick = frame_tick - bad_overlap_age;
+            size_t steps = (std::min)(visits, overlap_watch.size());
+            while (steps-- > 0 && !overlap_watch.empty()) {
+                if (overlap_watch_cursor >= overlap_watch.size()) {
+                    overlap_watch_cursor = 0;
+                }
+                const ImageId image_id = overlap_watch[overlap_watch_cursor];
+                if (!slot_images.contains(image_id) ||
+                    slot_images[image_id].overlapping_images.empty()) {
+                    overlap_watch_set.erase(image_id);
+                    overlap_watch[overlap_watch_cursor] = overlap_watch.back();
+                    overlap_watch.pop_back();
+                    continue;
+                }
+                ++overlap_watch_cursor;
+                const Image& image = slot_images[image_id];
+                if (False(image.flags & ImageFlagBits::Registered) ||
+                    lru_cache.Tick(image.lru_index) > last_tick) {
+                    continue;
+                }
+                visit_bad_overlap(image_id);
+            }
+        } else {
+            lru_cache.ForEachItemBelow(frame_tick - bad_overlap_age, [&](ImageId image_id) {
+                if (visits-- == 0) {
+                    return true;
+                }
+                return visit_bad_overlap(image_id);
+            });
+        }
     }
     Configure(false);
     static const u64 old_age = [] {
@@ -1963,6 +2050,47 @@ void TextureCache<P>::WriteBackImage(Image& image) {
     runtime.Finish();
     SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, map.mapped_span,
                  swizzle_data_buffer);
+}
+
+template <class P>
+void TextureCache<P>::WriteBackImages(std::span<const ImageId> images) {
+    // Same as WriteBackImage for each, in order, but the GPU is waited for once (see
+    // DownloadMemory); all swizzles happen after the wait, in the given order.
+    constexpr size_t MaxBatchBytes = 64_MiB;
+    using Map = decltype(runtime.DownloadStagingBuffer(size_t{}));
+    using Copies = decltype(FullDownloadCopies(std::declval<const ImageInfo&>()));
+    struct Pending {
+        ImageId image_id;
+        Map map;
+        Copies copies;
+    };
+    boost::container::small_vector<Pending, 8> pending;
+    size_t pending_bytes = 0;
+    const auto flush_pending = [&] {
+        if (pending.empty()) {
+            return;
+        }
+        runtime.Finish();
+        for (Pending& entry : pending) {
+            Image& written = slot_images[entry.image_id];
+            SwizzleImage(*gpu_memory, written.gpu_addr, written.info, entry.copies,
+                         entry.map.mapped_span, swizzle_data_buffer);
+        }
+        pending.clear();
+        pending_bytes = 0;
+    };
+    for (const ImageId image_id : images) {
+        Image& image = slot_images[image_id];
+        if (!pending.empty() && pending_bytes + image.unswizzled_size_bytes > MaxBatchBytes) {
+            flush_pending();
+        }
+        auto map = runtime.DownloadStagingBuffer(image.unswizzled_size_bytes);
+        auto copies = FullDownloadCopies(image.info);
+        image.DownloadMemory(map, copies);
+        pending_bytes += image.unswizzled_size_bytes;
+        pending.push_back(Pending{image_id, map, std::move(copies)});
+    }
+    flush_pending();
 }
 
 template <class P>
@@ -4055,8 +4183,10 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
                             moved.flags |= ImageFlagBits::BadOverlap;
                         }
                         WatchColdImage(other_id);
+                        WatchOverlap(other_id);
                     }
                     WatchColdImage(old_id);
+                    WatchOverlap(old_id);
                     return old_id;
                 }
                 if (mode == 1) {
@@ -4204,9 +4334,11 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
             new_image.flags |= ImageFlagBits::BadOverlap;
         }
         WatchColdImage(aliased_id);
+        WatchOverlap(aliased_id);
     }
     if (!join_bad_overlap_ids.empty()) {
         WatchColdImage(new_image_id);
+        WatchOverlap(new_image_id);
     }
 
     // The copy from an alias into the new image, or null when the loop below skips it.

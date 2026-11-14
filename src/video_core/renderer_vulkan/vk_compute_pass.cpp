@@ -822,8 +822,16 @@ void ASTCDecoderPass::AssembleInto(const VideoCommon::ImageInfo& info, u32 skip,
         return;
     }
     const auto start = std::chrono::steady_clock::now();
+    // EDEN_NX2_ASTC_DEFER=1 (off by default): batch the submits of decodes made within 500 us of
+    // each other like fences do (DeferFlush); the back thread's idle hook submits what is left.
+    static const bool defer_flush = [] {
+        const char* value = std::getenv("EDEN_NX2_ASTC_DEFER");
+        return value != nullptr && value[0] == '1';
+    }();
     if (flush_only) {
-        scheduler.Flush();
+        if (!defer_flush || !scheduler.DeferFlush()) {
+            scheduler.Flush();
+        }
     } else {
         scheduler.Finish();
     }
