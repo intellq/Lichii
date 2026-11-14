@@ -220,8 +220,20 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
             }
         }
     };
+    // EDEN_NX2_EXP57=0 turns the one-download-a-frame limit below off (it is on otherwise).
+    static const bool limit_downloads = [] {
+        const char* value = std::getenv("EDEN_NX2_EXP57");
+        return value == nullptr || value[0] != '0';
+    }();
+    // What this pass wrote back, for the log line at its end.
+    u32 pass_downloads = 0;
+    u32 pass_deferred = 0;
+    u64 pass_download_bytes = 0;
+    std::chrono::steady_clock::duration pass_download_time{};
     const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
-                          &evict_old_costly, out_of_memory](ImageId image_id) {
+                          &evict_old_costly, &pass_downloads, &pass_deferred,
+                          &pass_download_bytes, &pass_download_time,
+                          out_of_memory](ImageId image_id) {
         if (num_iterations == 0) {
             return true;
         }
@@ -239,13 +251,19 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
         // frame unless an allocation failed. A player's first high-priority pass downloaded
         // image after image and froze for 3 s (fable52_answer_3 s7); the rest wait for later
         // frames.
-        if (must_download && !out_of_memory && false &&
+        // On a loading screen nothing is drawn with the last area's targets, so every one of them
+        // ages out together: written back one after the other, they held the GPU thread for
+        // 20 s to 2 min on a 16 GB RADV card near its budget (OoT area loads with FSR 4 output).
+        if (must_download && !out_of_memory && limit_downloads &&
             gc_waited_frame == frame_tick) {
             ++gc_downloads_deferred;
+            ++pass_deferred;
             return false;
         }
         if (must_download) {
             gc_waited_frame = frame_tick;
+            const auto download_start = std::chrono::steady_clock::now();
+            pass_download_bytes += ImageAllocationBytes(image);
             WriteBackImage(image);
             // An image that overlaps others badly shares memory with them. Dropped without a
             // write-back, the next image made over that memory loads whatever an older image left
@@ -258,6 +276,8 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
                 }
             }
             ++gc_download_deletes;
+            ++pass_downloads;
+            pass_download_time += std::chrono::steady_clock::now() - download_start;
             ClearStaleImage(image);
         } else {
             MarkStale(image); // before UntrackImage (see MarkStale)
@@ -383,6 +403,43 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
     if (out_of_memory || total_used_memory >= critical_memory) {
         Configure(true);
         Collect();
+    }
+    // Write-backs summed over a second, logged when there were any: their count, size and time,
+    // the slowest pass and how many were put off for later frames.
+    struct DownloadWindow {
+        std::chrono::steady_clock::time_point start{};
+        std::chrono::steady_clock::duration time{};
+        std::chrono::steady_clock::duration slowest_pass{};
+        u64 bytes = 0;
+        u32 downloads = 0;
+        u32 deferred = 0;
+        u32 passes = 0;
+    };
+    static DownloadWindow window;
+    if (pass_downloads != 0 || pass_deferred != 0) {
+        if (window.passes == 0) {
+            window.start = std::chrono::steady_clock::now();
+        }
+        ++window.passes;
+        window.downloads += pass_downloads;
+        window.deferred += pass_deferred;
+        window.bytes += pass_download_bytes;
+        window.time += pass_download_time;
+        window.slowest_pass = (std::max)(window.slowest_pass, pass_download_time);
+    }
+    if (window.passes != 0 &&
+        std::chrono::steady_clock::now() - window.start >= std::chrono::seconds{1}) {
+        using std::chrono::duration_cast;
+        using std::chrono::milliseconds;
+        LOG_INFO(HW_GPU,
+                 "Texture collector write-backs in {} passes: {} images, {} MiB, {} ms (slowest "
+                 "pass {} ms), {} put off (EXP57 {}); {} MiB used, expected {} MiB, critical {} MiB",
+                 window.passes, window.downloads, window.bytes >> 20,
+                 duration_cast<milliseconds>(window.time).count(),
+                 duration_cast<milliseconds>(window.slowest_pass).count(), window.deferred,
+                 limit_downloads ? "on" : "off", total_used_memory >> 20, expected_memory >> 20,
+                 critical_memory >> 20);
+        window = {};
     }
 }
 
