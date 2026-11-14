@@ -276,8 +276,8 @@ void SinkStream::ProcessAudioOutAndRender(std::span<s16> output_buffer, std::siz
     std::memcpy(last_frame.data(), &output_buffer[(frames_written - 1) * frame_size], frame_size_bytes);
 
     // EDEN_NX2_AUDIO_LEVEL: log the output peak about every two seconds (is a game audible?).
-    if (static const bool meter = std::getenv("EDEN_NX2_AUDIO_LEVEL") != nullptr;
-        meter || type == StreamType::Sysmix) {
+    // Off by default: no per-callback sample scan and no periodic log line without it.
+    if (static const bool meter = std::getenv("EDEN_NX2_AUDIO_LEVEL") != nullptr; meter) {
         for (size_t i = 0; i < num_frames * frame_size; ++i) {
             level_peak = std::max<s32>(level_peak, std::abs(static_cast<s32>(output_buffer[i])));
         }

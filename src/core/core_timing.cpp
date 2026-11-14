@@ -9,6 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <vector>
 #include "common/cpu_features.h"
@@ -167,15 +168,37 @@ void CoreTiming::WaitForEvent(s64 next_time) {
     if (next_time <= start) {
         return;
     }
+    // EDEN_NX2_HOSTTIMING_SPIN=1 (Linux, off by default): sleep until 100 us before the event and
+    // spin with pause for the rest, so the wake does not pay the scheduler latency.
+#ifdef __linux__
+    static const bool spin_tail = [] {
+        const char* env = std::getenv("EDEN_NX2_HOSTTIMING_SPIN");
+        return env != nullptr && env[0] == '1';
+    }();
+#else
+    constexpr bool spin_tail = false;
+#endif
+    constexpr s64 SPIN_TAIL_NS = 100'000;
+    const s64 margin_ns = spin_tail ? SPIN_TAIL_NS : HOST_WAIT_MARGIN_NS;
     s64 now = start;
     bool signalled = false;
-    if (next_time - now > HOST_WAIT_MARGIN_NS) {
-        signalled = event.SleepFor(std::chrono::nanoseconds{next_time - HOST_WAIT_MARGIN_NS - now});
+    if (next_time - now > margin_ns) {
+        signalled = event.SleepFor(std::chrono::nanoseconds{next_time - margin_ns - now});
         now = GetGlobalTimeNs().count();
     }
     const s64 sleep_ns = now - start;
-    if (!signalled && next_time > now) {
-        signalled = event.WaitFor(std::chrono::nanoseconds{next_time - now});
+    if (spin_tail && !signalled) {
+        while (now < next_time && !event.IsSet()) {
+#if defined(__x86_64__)
+            __builtin_ia32_pause();
+#else
+            std::this_thread::yield();
+#endif
+            now = GetGlobalTimeNs().count();
+        }
+    }
+    if (!signalled && (next_time > now || (spin_tail && event.IsSet()))) {
+        signalled = event.WaitFor(std::chrono::nanoseconds{next_time > now ? next_time - now : 1});
     }
     if (!host_wait_stats.load(std::memory_order_relaxed)) {
         return;

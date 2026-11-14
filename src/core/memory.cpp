@@ -652,10 +652,27 @@ struct Memory::Impl {
         }
         std::scoped_lock lk{read_trap_mutex};
         const u64 page_end = ((vaddr + size - 1) >> LICHII_PAGEBITS) + 1;
+        // One mprotect per run of contiguous armed pages instead of one per page.
+        u64 run_begin = 0;
+        u64 run_pages = 0;
+        const auto protect_run = [&] {
+            if (run_pages > 0) {
+                host_buffer->Protect(run_begin << LICHII_PAGEBITS, run_pages << LICHII_PAGEBITS,
+                                     Common::MemoryPermission{});
+                run_pages = 0;
+            }
+        };
         for (auto it = armed_read_traps.lower_bound(vaddr >> LICHII_PAGEBITS);
              it != armed_read_traps.end() && *it < page_end; ++it) {
-            host_buffer->Protect(*it << LICHII_PAGEBITS, LICHII_PAGESIZE, Common::MemoryPermission{});
+            if (run_pages > 0 && *it != run_begin + run_pages) {
+                protect_run();
+            }
+            if (run_pages == 0) {
+                run_begin = *it;
+            }
+            ++run_pages;
         }
+        protect_run();
     }
 
     /// A slow-path read of a cached page: its trap, if any, has done its job.
@@ -666,13 +683,29 @@ struct Memory::Impl {
         std::scoped_lock lk{read_trap_mutex};
         const u64 page_end = ((vaddr + size - 1) >> LICHII_PAGEBITS) + 1;
         auto it = armed_read_traps.lower_bound(vaddr >> LICHII_PAGEBITS);
+        // One mprotect per run of contiguous armed pages instead of one per page.
+        u64 run_begin = 0;
+        u64 run_pages = 0;
+        const auto protect_run = [&] {
+            if (run_pages > 0) {
+                host_buffer->Protect(run_begin << LICHII_PAGEBITS, run_pages << LICHII_PAGEBITS,
+                                     Common::MemoryPermission::Read);
+                run_pages = 0;
+            }
+        };
         while (it != armed_read_traps.end() && *it < page_end) {
             // Still cached (this read came through the rasterizer path): writes stay trapped.
-            host_buffer->Protect(*it << LICHII_PAGEBITS, LICHII_PAGESIZE,
-                                 Common::MemoryPermission::Read);
+            if (run_pages > 0 && *it != run_begin + run_pages) {
+                protect_run();
+            }
+            if (run_pages == 0) {
+                run_begin = *it;
+            }
+            ++run_pages;
             it = armed_read_traps.erase(it);
             armed_read_trap_count.fetch_sub(1, std::memory_order_relaxed);
         }
+        protect_run();
     }
 
     /**

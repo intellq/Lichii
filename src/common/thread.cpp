@@ -53,6 +53,7 @@
 #include <sys/prctl.h>
 #endif
 #include <algorithm>
+#include <mutex>
 
 namespace {
 constexpr int NICE_AUDIO = -16;
@@ -680,6 +681,20 @@ void SetCurrentThreadPriority(ThreadPriority new_priority) {
         LOG_DEBUG(Common, "Could not set thread nice value to {}: {}", nice_value,
                   GetLastErrorMsg());
     }
+    // Say once, at Warning, when the RLIMIT_NICE clamp turns the priorities into no-ops, since
+    // Debug is off by default and the cause is otherwise invisible.
+    if (LowestAllowedNice() > NICE_AUDIO) {
+        static std::once_flag nice_warning;
+        std::call_once(nice_warning, [] {
+            rlimit limit{};
+            getrlimit(RLIMIT_NICE, &limit);
+            LOG_WARNING(Common,
+                        "Thread priorities are limited by RLIMIT_NICE (soft limit {}, lowest nice "
+                        "{}); raise it (limits.d 'nice -16' or LimitNICE=) for HostTiming, audio "
+                        "and GPU priority",
+                        static_cast<unsigned long long>(limit.rlim_cur), LowestAllowedNice());
+        });
+    }
 #else
     const s32 max_prio = sched_get_priority_max(SCHED_OTHER);
     const s32 min_prio = sched_get_priority_min(SCHED_OTHER);
@@ -742,7 +757,7 @@ void SetCurrentThreadToPerformanceCores() {
 #endif
 }
 
-void PinCurrentThread(PinnedRole role) {
+void PinCurrentThread(PinnedRole role, int guest_core) {
 #ifdef _WIN32
     struct PinnedCpuSets {
         std::vector<ULONG> front;
@@ -789,11 +804,42 @@ void PinCurrentThread(PinnedRole role) {
     const std::vector<u32>& cpus = role == PinnedRole::GpuFront  ? plan.front
                                    : role == PinnedRole::GpuBack ? plan.back
                                                                  : plan.guest;
-    if (!cpus.empty()) {
+    // EDEN_NX2_GUEST_PIN_EACH=1: each guest core gets one physical core of the guest set (its SMT
+    // siblings) instead of the whole set, so two JIT threads never share a core's units.
+    static const std::vector<std::vector<u32>> guest_groups = [] {
+        std::vector<std::vector<u32>> groups;
+        const char* value = std::getenv("EDEN_NX2_GUEST_PIN_EACH");
+        if (plan.guest.empty() || value == nullptr || value[0] != '1') {
+            return groups;
+        }
+        std::vector<u32> group_cores;
+        for (const Common::LogicalProcessor& processor : LinuxProcessors()) {
+            if (std::find(plan.guest.begin(), plan.guest.end(), processor.id) ==
+                plan.guest.end()) {
+                continue;
+            }
+            const auto found = std::find(group_cores.begin(), group_cores.end(), processor.core);
+            if (found == group_cores.end()) {
+                group_cores.push_back(processor.core);
+                groups.emplace_back();
+                groups.back().push_back(processor.id);
+            } else {
+                groups[static_cast<size_t>(found - group_cores.begin())].push_back(processor.id);
+            }
+        }
+        LOG_INFO(Common, "Thread pinning: each guest core on its own physical core ({} cores)",
+                 groups.size());
+        return groups;
+    }();
+    if (role == PinnedRole::GuestCore && guest_core >= 0 && !guest_groups.empty()) {
+        SetCurrentThreadAffinity(
+            guest_groups[static_cast<size_t>(guest_core) % guest_groups.size()]);
+    } else if (!cpus.empty()) {
         SetCurrentThreadAffinity(cpus);
     }
 #else
     (void)role;
+    (void)guest_core;
     [[maybe_unused]] static const bool logged = [] {
         LOG_INFO(Common, "GPU thread pinning is only supported on Windows and Linux");
         return true;

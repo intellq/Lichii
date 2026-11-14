@@ -760,6 +760,17 @@ public:
         int flags = (fd >= 0 ? MAP_SHARED : MAP_PRIVATE) | MAP_FIXED;
         void* ret = mmap(virtual_base + virtual_offset, length, prot_flags, flags, fd, host_offset);
         ASSERT_MSG(ret != MAP_FAILED, "mmap: {} {}", strerror(errno), fd);
+#if defined(__linux__)
+        // MAP_FIXED creates a new VMA without the VM_HUGEPAGE flag set on the reservation, so ask
+        // again for the mapped range. EDEN_NX2_GUEST_THP=0 goes back to the old behaviour.
+        static const bool guest_thp = [] {
+            const char* env = std::getenv("EDEN_NX2_GUEST_THP");
+            return env == nullptr || env[0] != '0';
+        }();
+        if (guest_thp && fd >= 0 && length >= (size_t{2} << 20)) {
+            madvise(ret, length, MADV_HUGEPAGE);
+        }
+#endif
     }
 
     void Unmap(size_t virtual_offset, size_t length) {

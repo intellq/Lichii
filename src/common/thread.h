@@ -140,7 +140,9 @@ enum class PinnedRole : u32 { GpuFront, GpuBack, GuestCore };
 /// back each get a physical performance core of their own and the guest cores keep off those two.
 /// Skipped, with one log line, on CPUs with too few cores, with EDEN_HYBRID_CORES=0 (Windows), and
 /// on other hosts.
-void PinCurrentThread(PinnedRole role);
+/// `guest_core`: the guest core index for GuestCore. On Linux with EDEN_NX2_GUEST_PIN_EACH=1 each
+/// guest core gets one physical core of the guest set to itself. Ignored elsewhere.
+void PinCurrentThread(PinnedRole role, int guest_core = -1);
 
 void RefreshThreadPolicies();
 void PollThreadPolicies();

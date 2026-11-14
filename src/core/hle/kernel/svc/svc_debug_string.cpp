@@ -3,7 +3,10 @@
 
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
+#include <algorithm>
 #include <condition_variable>
+#include <cstdlib>
 #include <mutex>
 #include <optional>
 #include <stop_token>
@@ -19,6 +22,26 @@ namespace Kernel::Svc {
 /// Used to output a message on a debug hardware unit - does nothing on a retail unit
 Result OutputDebugString(Core::System& system, u64 address, u64 len) {
     R_SUCCEED_IF(len == 0);
+    // The first lines are logged in full, then only a summary every 1000 calls, so a game that
+    // prints every frame cannot flood the log. EDEN_NX2_DEBUG_STRING_LIMIT=0 logs everything.
+    static const bool limited = [] {
+        const char* env = std::getenv("EDEN_NX2_DEBUG_STRING_LIMIT");
+        return env == nullptr || std::strtol(env, nullptr, 10) != 0;
+    }();
+    constexpr u64 FULL_LINES = 200;
+    constexpr u64 SUMMARY_EVERY = 1000;
+    if (limited) {
+        static std::atomic<u64> calls{0};
+        const u64 count = calls.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (count > FULL_LINES) {
+            if ((count - FULL_LINES) % SUMMARY_EVERY == 0) {
+                LOG_INFO(Debug_Emulated, "OutputDebugString: {} calls so far, only the first {} logged",
+                         count, FULL_LINES);
+            }
+            R_SUCCEED();
+        }
+        len = (std::min)(len, u64{4096});
+    }
     std::string msg_buffer(len, 0);
     GetCurrentMemory(system.Kernel()).ReadBlock(address, msg_buffer.data(), len);
     LOG_INFO(Debug_Emulated, "{}", msg_buffer);

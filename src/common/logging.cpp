@@ -280,11 +280,23 @@ struct FileBackend final : public Backend {
     ~FileBackend() noexcept override = default;
 
     void Write(const Entry& entry) noexcept override {
-        if (!enabled)
+        if (!enabled.load(std::memory_order_relaxed))
             return;
 
-        auto message = FormatLogMessage(entry);
+        // Format into a reused buffer instead of a new std::string per line.
+        thread_local fmt::memory_buffer buffer;
+        buffer.clear();
+        if (entry.filename) {
+            const auto time_seconds = uint32_t(entry.timestamp.count() / 1000000);
+            const auto time_fractional = uint32_t(entry.timestamp.count() % 1000000);
+            fmt::format_to(std::back_inserter(buffer), "[{:4d}.{:06d}] {} <{}> {}:{}:{}: {}\n",
+                           time_seconds, time_fractional, GetLogClassName(entry.log_class),
+                           GetLevelName(entry.log_level), entry.filename, entry.line_num,
+                           entry.function, entry.message);
+        }
+        std::span<const char> line{buffer.data(), buffer.size()};
 #ifndef __ANDROID__
+        std::string censored;
         if (Settings::values.censor_username.GetValue()) {
             // This must be a static otherwise it would get checked on EVERY
             // instance of logging an entry...
@@ -297,11 +309,18 @@ struct FileBackend final : public Backend {
                         return std::string{s};
                 return std::string{};
             }();
-            if (!username.empty())
-                boost::replace_all(message, username, "user");
+            // Only allocate when the username is really in the line.
+            if (!username.empty() &&
+                std::string_view{line.data(), line.size()}.find(username) != std::string_view::npos) {
+                censored.assign(line.data(), line.size());
+                boost::replace_all(censored, username, "user");
+                line = std::span<const char>{censored.data(), censored.size()};
+            }
         }
 #endif
-        bytes_written += file->WriteSpan(std::span<const char>{message.begin(), message.end()});
+        const std::size_t written = file->WriteSpan(line);
+        const std::size_t bytes_now =
+            bytes_written.fetch_add(written, std::memory_order_relaxed) + written;
 
         // Option to log each line rather than 4k buffers
         if (Settings::values.log_flush_line.GetValue())
@@ -310,12 +329,12 @@ struct FileBackend final : public Backend {
         using namespace Common::Literals;
         // Prevent logs from exceeding a set maximum size in the event that log entries are spammed.
         const auto write_limit = Settings::values.extended_logging.GetValue() ? 1_GiB : 100_MiB;
-        const bool write_limit_exceeded = bytes_written > write_limit;
+        const bool write_limit_exceeded = bytes_now > write_limit;
         if (entry.log_level >= Level::Error || write_limit_exceeded) {
             // Stop writing after the write limit is exceeded.
             // Don't close the file so we can print a stacktrace if necessary
             if (write_limit_exceeded)
-                enabled = false;
+                enabled.store(false, std::memory_order_relaxed);
             file->Flush();
         }
     }
@@ -328,8 +347,8 @@ struct FileBackend final : public Backend {
 
 private:
     std::optional<FS::IOFile> file;
-    std::size_t bytes_written = 0;
-    bool enabled = true;
+    std::atomic<std::size_t> bytes_written{0};
+    std::atomic_bool enabled{true};
 };
 #endif
 /// @brief Backend that keeps the last lines in memory, off unless the debug server turns it on
