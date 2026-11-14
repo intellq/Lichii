@@ -767,13 +767,7 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         properties.properties.limits.maxVertexInputBindings = 32;
     }
 
-    auto dyna_state = Settings::values.dyna_state.GetValue();
-    // Test hook: EDEN_NX2_RADV_EDS3=1 raises the default EDS2 level to EDS3 on RADV only.
-    if (driver_id == VK_DRIVER_ID_MESA_RADV && dyna_state == Settings::ExtendedDynamicState::EDS2 &&
-        EnvFlagSet("EDEN_NX2_RADV_EDS3")) {
-        LOG_INFO(Render_Vulkan, "EDEN_NX2_RADV_EDS3 set, using EDS3 on RADV");
-        dyna_state = Settings::ExtendedDynamicState::EDS3;
-    }
+    const auto dyna_state = Settings::values.dyna_state.GetValue();
     switch (dyna_state) {
     case Settings::ExtendedDynamicState::Disabled:
         // Level 0: Disable all extended dynamic state extensions
