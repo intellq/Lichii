@@ -460,12 +460,19 @@ constexpr std::array HIGH_REFRESH_RECORDS{
     BuiltinPatchRecord{0x3C46B00, STEP_AMBIENT_ROUTINE, {}, true},
     BuiltinPatchRecord{0x3C46980, STEP_SHARED_ROUTINE, {}, true},
     // Lichii: High refresh rate runs above 60 and 100 fps too, and switching it live only
-    // rewrites its own sites, so both modes carry the same ground velocity and turn speed fixes.
+    // rewrites its own sites, so both modes carry the same ground velocity, turn speed, movie
+    // frame count and Scarecrow's Song fixes.
     BuiltinPatchRecord{0x13A070, GROUND_VELOCITY_NOP, GROUND_VELOCITY_ORIGINAL_A},
     BuiltinPatchRecord{0x13D710, GROUND_VELOCITY_NOP, GROUND_VELOCITY_ORIGINAL_B},
     BuiltinPatchRecord{0x389AC2C, GROUND_VELOCITY_NOP, GROUND_VELOCITY_ORIGINAL_C},
     BuiltinPatchRecord{0x261EB18, TURN_SPEED_HOOK, TURN_SPEED_ORIGINAL},
     BuiltinPatchRecord{0x3C46A40, TURN_SPEED_ROUTINE, {}, true},
+    BuiltinPatchRecord{0x3B5C7C8, MOVIE_FRAMES_HOOK, MOVIE_FRAMES_ORIGINAL},
+    BuiltinPatchRecord{0x3C46A70, MOVIE_FRAMES_ROUTINE, {}, true},
+    BuiltinPatchRecord{0x3296B08, SCARECROW_RECORD_HOOK, SCARECROW_CUT_ORIGINAL},
+    BuiltinPatchRecord{0x3C46AB0, SCARECROW_RECORD_ROUTINE, {}, true},
+    BuiltinPatchRecord{0x32926C8, SCARECROW_LAST_HOOK, SCARECROW_CUT_ORIGINAL},
+    BuiltinPatchRecord{0x3C46AD8, SCARECROW_LAST_ROUTINE, {}, true},
 };
 constexpr std::string_view DYNAMIC_FPS_NAME = "Dynamic FPS by Dark (built-in)";
 constexpr std::string_view HIGH_REFRESH_NAME = "High refresh rate (built-in, experimental)";
