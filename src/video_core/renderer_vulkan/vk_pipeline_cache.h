@@ -476,6 +476,14 @@ private:
     /// (used_pipelines) are built at boot; the rest are built when first needed, and not stored
     /// again. Each built pipeline holds driver memory (title 1: 6.5k cached, a quarter used).
     std::unordered_set<u64> disk_pipelines;
+    /// Compute record keys appended this session; touched only on the serialization thread
+    std::unordered_set<u64> appended_computes;
+    /// Size and hash of the driver cache blob last read from or written to the file. A save of
+    /// an identical blob over an intact file is skipped.
+    std::mutex vulkan_cache_saved_mutex;
+    size_t vulkan_cache_saved_size{};
+    u64 vulkan_cache_saved_hash{};
+    bool vulkan_cache_saved_valid{};
     std::unordered_map<u64, u8> used_pipelines; ///< Key hash -> sessions since it was last used
     std::unordered_set<const GraphicsPipeline*> used_this_session;
     std::chrono::steady_clock::time_point used_pipelines_saved{};

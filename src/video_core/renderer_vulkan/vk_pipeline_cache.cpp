@@ -4936,8 +4936,13 @@ ComputePipelineCacheEntry PipelineCache::CreateComputePipeline(const ComputePipe
             std::span(reinterpret_cast<const char*>(&key), sizeof(key)), envs,
             host_info.EnvironmentReadProperties())};
         if (!payload.empty()) {
-            cache_v2->Writer().Append(VideoCommon::ShaderCacheV2::RecordKind::Compute,
-                                      ComputeRecordKey(payload), payload);
+            // A runtime rebuild of the same compute shader would append the same record again
+            const u64 record_key = ComputeRecordKey(payload);
+            if (!appended_computes.insert(record_key).second) {
+                return;
+            }
+            cache_v2->Writer().Append(VideoCommon::ShaderCacheV2::RecordKind::Compute, record_key,
+                                      payload);
         }
     });
     QueueVulkanPipelineCacheFlush();
@@ -5045,6 +5050,12 @@ bool PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& fi
                                                  u32 cache_version) {
     // Written beside the cache and renamed over it: the emulator stopped mid-write left the cache
     // empty, and every later boot failed to read it.
+    // Skipped when the driver blob equals the one last read or written and the file is intact:
+    // rewriting hundreds of MB on every boot and exit for nothing. The format is unchanged.
+    static const bool skip_unchanged = [] {
+        const char* const text = std::getenv("EDEN_NX2_VK_CACHE_SKIP_UNCHANGED");
+        return text == nullptr || text[0] != '0';
+    }();
     auto temporary = filename;
     temporary += ".tmp";
     std::ofstream file(temporary, std::ios::binary);
@@ -5066,6 +5077,23 @@ bool PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& fi
             pipeline_cache.Read(&cache_size, cache_data.data());
         }
         Common::NoteShutdownProgress();
+        const u64 blob_hash = skip_unchanged && cache_size != 0
+                                  ? Common::CityHash64(cache_data.data(), cache_size)
+                                  : 0;
+        if (skip_unchanged && cache_size != 0) {
+            std::error_code size_error;
+            const auto file_size = std::filesystem::file_size(filename, size_error);
+            const std::scoped_lock lock{vulkan_cache_saved_mutex};
+            if (!size_error && vulkan_cache_saved_valid && vulkan_cache_saved_size == cache_size &&
+                vulkan_cache_saved_hash == blob_hash &&
+                file_size == VULKAN_CACHE_MAGIC_NUMBER.size() + sizeof(cache_version) +
+                                 cache_size) {
+                file.close();
+                std::filesystem::remove(temporary, size_error);
+                LOG_INFO(Render_Vulkan, "Vulkan driver pipeline cache unchanged, not rewritten");
+                return true;
+            }
+        }
         // In pieces: a cache of tens of thousands of pipelines is gigabytes, and a shutdown
         // waiting on it is told the write still moves.
         constexpr size_t Chunk = size_t{64} << 20;
@@ -5075,6 +5103,12 @@ bool PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& fi
             Common::NoteShutdownProgress();
         }
         file.close();
+        if (skip_unchanged) {
+            const std::scoped_lock lock{vulkan_cache_saved_mutex};
+            vulkan_cache_saved_size = cache_size;
+            vulkan_cache_saved_hash = blob_hash;
+            vulkan_cache_saved_valid = cache_size != 0;
+        }
     } catch (const std::ios_base::failure& e) {
         // The cache stays as it was: only the file being written goes.
         LOG_ERROR(Common_Filesystem, "{}", e.what());
@@ -5152,6 +5186,14 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
         const size_t cache_size = static_cast<size_t>(end) - header_size;
         std::vector<char> cache_data(cache_size);
         file.read(cache_data.data(), cache_size);
+        {
+            // What the file holds now, for the save that skips an unchanged blob
+            const std::scoped_lock lock{vulkan_cache_saved_mutex};
+            vulkan_cache_saved_size = cache_size;
+            vulkan_cache_saved_hash =
+                cache_size != 0 ? Common::CityHash64(cache_data.data(), cache_size) : 0;
+            vulkan_cache_saved_valid = cache_size != 0;
+        }
 
         LOG_INFO(Render_Vulkan,
                  "Loaded Vulkan driver pipeline cache: {}", Common::FS::PathToUTF8String(filename));
