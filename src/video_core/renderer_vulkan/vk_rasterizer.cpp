@@ -3655,28 +3655,6 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, bool r
                             three_quarter_1440p;
     const bool upscale_4k = pass_1440p && !native_resolution &&
                             !(fsr_output == VideoCommon::OcarinaExtent{2560, 1440});
-    {
-        // Why FSR writes the size it does, logged when it changes: the pass the game drew with, the
-        // size on screen the renderer saw and the output it gives.
-        const auto screen = VideoCommon::OcarinaScreenExtent();
-        const std::string state = fmt::format(
-            "pass {} (1440p {}, 3/4 {}, performance scale {}), scene {}x{}, target {}x{}, screen "
-            "{}x{}, output choice {}, FSR output {}x{}, upscale beyond the target {}",
-            upscale_hash == ComputePipeline::Ocarina1440pShader              ? "1440p"
-            : upscale_hash == ComputePipeline::Ocarina1440pScaledShader      ? "1440p scaled"
-            : upscale_hash == ComputePipeline::Ocarina1440pScaledFieldShader ? "1440p scaled field"
-            : upscale_hash == ComputePipeline::OcarinaThreeQuarterShader     ? "3/4"
-            : native_size                                                    ? "full size"
-                                                                             : "other",
-            pass_1440p, three_quarter_1440p, oot_performance_scale, extent.width, extent.height,
-            target.size.width, target.size.height, screen.width, screen.height, output_choice,
-            fsr_output.width, fsr_output.height, upscale_4k);
-        static std::string last_output_state;
-        if (state != last_output_state) {
-            LOG_INFO(Render_Vulkan, "Ocarina FSR output: {}", state);
-            last_output_state = state;
-        }
-    }
     // The 1440p pass takes any 16:9 scene up to 2560x1440: the DLSS render scales shrink it.
     const bool valid_extents =
         pass_1440p ? extent.width <= 2560 && extent.height <= 1440 &&
