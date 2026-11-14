@@ -668,6 +668,19 @@ constexpr std::array<VkFormat, 2> OpaqueAstcViewFormats{VK_FORMAT_BC1_RGBA_UNORM
             image_ci.pNext = &image_format_list;
         }
     }
+    VkImageCompressionControlEXT compression_control{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_CONTROL_EXT,
+        .pNext = image_ci.pNext,
+        .flags = VK_IMAGE_COMPRESSION_DISABLED_EXT,
+        .compressionControlPlaneCount = 0,
+        .pFixedRateFlags = nullptr,
+    };
+    // Depth keeps its compression: disabling it would also drop HTILE (HiZ).
+    if (device.DisablesColorCompression() &&
+        VideoCore::Surface::GetFormatType(info.format) ==
+            VideoCore::Surface::SurfaceType::ColorTexture) {
+        image_ci.pNext = &compression_control;
+    }
     // EXP42: single-level, single-layer render targets can come from (and go back to) the pool.
     constexpr VkImageUsageFlags attachment_usage =
         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
